@@ -1,0 +1,27 @@
+{
+	"name": "krnl-go",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-09-27",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"routes": [
+		{
+			"pattern": "go.krnl64.win/*",
+			"zone_name": "krnl64.win"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "LINKS",
+			"id": "f847c31492a54f76b225a3c989ee7cfa"
+		}
+	]
+}
