@@ -14,8 +14,8 @@
 	],
 	"routes": [
 		{
-			"pattern": "go.krnl64.win/*",
-			"zone_name": "krnl64.win"
+			"pattern": "go.krnl64.win",
+			"custom_domain": true
 		}
 	],
 	"kv_namespaces": [
