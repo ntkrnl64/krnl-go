@@ -1,16 +1,21 @@
 import {
   Badge,
   Button,
+  Caption1,
   Table,
   TableBody,
   TableCell,
   TableCellLayout,
+  type TableColumnDefinition,
   TableHeader,
   TableHeaderCell,
   TableRow,
   Tooltip,
+  createTableColumn,
   makeStyles,
   tokens,
+  useTableFeatures,
+  useTableSort,
 } from "@fluentui/react-components";
 import { DeleteRegular, EditRegular } from "@fluentui/react-icons";
 import { type ShortLink } from "../../api";
@@ -19,7 +24,6 @@ import LinkSlug from "../../components/LinkSlug";
 
 const useStyles = makeStyles({
   urlLink: {
-    maxWidth: "320px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -36,6 +40,11 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
   },
+  aliasList: {
+    display: "flex",
+    gap: "4px",
+    flexWrap: "wrap",
+  },
   actions: {
     display: "flex",
     gap: tokens.spacingHorizontalXS,
@@ -49,22 +58,87 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
+const columns: TableColumnDefinition<ShortLink>[] = [
+  createTableColumn<ShortLink>({
+    columnId: "id",
+    compare: (a, b) => a.id.localeCompare(b.id),
+  }),
+  createTableColumn<ShortLink>({
+    columnId: "url",
+    compare: (a, b) => a.url.localeCompare(b.url),
+  }),
+  createTableColumn<ShortLink>({ columnId: "aliases" }),
+  createTableColumn<ShortLink>({
+    columnId: "interstitial",
+    compare: (a, b) => {
+      const rank = (l: ShortLink) =>
+        l.interstitial === true ? 2 : l.interstitial === false ? 0 : 1;
+      return rank(a) - rank(b);
+    },
+  }),
+  createTableColumn<ShortLink>({
+    columnId: "createdAt",
+    compare: (a, b) => a.createdAt - b.createdAt,
+  }),
+];
+
 export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
   const styles = useStyles();
 
+  const {
+    getRows,
+    sort: { getSortDirection, toggleColumnSort, sort },
+  } = useTableFeatures({ columns, items: links }, [
+    useTableSort({
+      defaultSortState: {
+        sortColumn: "createdAt",
+        sortDirection: "descending",
+      },
+    }),
+  ]);
+
+  const rows = sort(getRows());
+
   return (
-    <Table arial-label="Short links">
+    <Table
+      aria-label="Short links"
+      style={{ tableLayout: "fixed", width: "100%" }}
+    >
       <TableHeader>
         <TableRow>
-          <TableHeaderCell>Short link</TableHeaderCell>
-          <TableHeaderCell>Destination</TableHeaderCell>
-          <TableHeaderCell>Interstitial</TableHeaderCell>
-          <TableHeaderCell>Created</TableHeaderCell>
-          <TableHeaderCell />
+          <TableHeaderCell
+            style={{ width: "160px" }}
+            sortDirection={getSortDirection("id")}
+            onClick={(e) => toggleColumnSort(e, "id")}
+          >
+            Short link
+          </TableHeaderCell>
+          <TableHeaderCell
+            sortDirection={getSortDirection("url")}
+            onClick={(e) => toggleColumnSort(e, "url")}
+          >
+            Destination
+          </TableHeaderCell>
+          <TableHeaderCell style={{ width: "180px" }}>Aliases</TableHeaderCell>
+          <TableHeaderCell
+            style={{ width: "100px" }}
+            sortDirection={getSortDirection("interstitial")}
+            onClick={(e) => toggleColumnSort(e, "interstitial")}
+          >
+            Interstitial
+          </TableHeaderCell>
+          <TableHeaderCell
+            style={{ width: "90px" }}
+            sortDirection={getSortDirection("createdAt")}
+            onClick={(e) => toggleColumnSort(e, "createdAt")}
+          >
+            Created
+          </TableHeaderCell>
+          <TableHeaderCell style={{ width: "104px" }}>Actions</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {links.map((link) => (
+        {rows.map(({ item: link }) => (
           <TableRow key={link.id}>
             <TableCell>
               <TableCellLayout>
@@ -83,6 +157,33 @@ export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
                     {link.url}
                   </a>
                 </Tooltip>
+              </TableCellLayout>
+            </TableCell>
+            <TableCell>
+              <TableCellLayout>
+                {link.aliases && link.aliases.length > 0 ? (
+                  <div className={styles.aliasList}>
+                    {link.aliases.map((a) => (
+                      <Badge
+                        key={a}
+                        appearance="ghost"
+                        color="subtle"
+                        size="small"
+                      >
+                        <Caption1 className={styles.mono}>{a}</Caption1>
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <span
+                    style={{
+                      color: tokens.colorNeutralForeground4,
+                      fontSize: tokens.fontSizeBase200,
+                    }}
+                  >
+                    —
+                  </span>
+                )}
               </TableCellLayout>
             </TableCell>
             <TableCell>

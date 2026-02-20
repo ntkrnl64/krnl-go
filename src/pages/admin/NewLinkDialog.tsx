@@ -16,7 +16,11 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { type InterstitialMode, type ShortLink, createLink } from "../../api";
+import {
+  type CreateLinkResult,
+  type InterstitialMode,
+  createLink,
+} from "../../api";
 
 const INTERSTITIAL_LABELS: Record<InterstitialMode, string> = {
   default: "Default (use global setting)",
@@ -36,7 +40,7 @@ const useStyles = makeStyles({
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (link: ShortLink) => void;
+  onCreated: (link: CreateLinkResult) => void;
 }
 
 export default function NewLinkDialog({

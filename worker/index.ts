@@ -7,6 +7,11 @@ interface LinkData {
   description?: string;
   interstitial?: boolean; // undefined = use global default
   redirectDelay?: number; // seconds; undefined = use global default, 0 = disabled
+  aliases?: string[]; // other IDs that redirect here
+}
+
+interface AliasData {
+  aliasOf: string; // primary link ID
 }
 
 interface AdminData {
@@ -27,6 +32,10 @@ const DEFAULT_CONFIG: GlobalConfig = {
   interstitialDescription: "You are about to visit an external website.",
   redirectDelay: 0,
 };
+
+function isAlias(data: unknown): data is AliasData {
+  return typeof data === "object" && data !== null && "aliasOf" in data;
+}
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -92,6 +101,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 async function getAuth(request: Request, env: Env): Promise<boolean> {
+  if (env.KRNLGO_NO_TOKEN !== undefined) return true;
   const auth = request.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return false;
   return (await env.LINKS.get(`__session__:${auth.slice(7)}`)) !== null;
@@ -109,6 +119,39 @@ async function getConfig(env: Env): Promise<GlobalConfig> {
   return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<GlobalConfig>) };
 }
 
+/** Resolves an ID to its primary link data, following aliases one level. */
+async function resolveToLink(
+  env: Env,
+  id: string,
+): Promise<{ id: string; data: LinkData } | null> {
+  const raw = await env.LINKS.get(`link:${id}`);
+  if (!raw) return null;
+  const parsed = JSON.parse(raw) as LinkData | AliasData;
+  if (isAlias(parsed)) {
+    const primaryRaw = await env.LINKS.get(`link:${parsed.aliasOf}`);
+    if (!primaryRaw) return null;
+    return { id: parsed.aliasOf, data: JSON.parse(primaryRaw) as LinkData };
+  }
+  return { id, data: parsed };
+}
+
+/** Scans all primary links to find one matching a URL (used for auto-merge). */
+async function findLinkByUrl(
+  env: Env,
+  url: string,
+): Promise<{ id: string; data: LinkData } | null> {
+  const list = await env.LINKS.list({ prefix: "link:" });
+  for (const key of list.keys) {
+    const raw = await env.LINKS.get(key.name);
+    if (!raw) continue;
+    const parsed = JSON.parse(raw) as LinkData | AliasData;
+    if (!isAlias(parsed) && parsed.url === url) {
+      return { id: key.name.slice(5), data: parsed };
+    }
+  }
+  return null;
+}
+
 type InterstitialMode = "default" | "always" | "never";
 
 interface LinkPayload {
@@ -117,7 +160,7 @@ interface LinkPayload {
   title?: string;
   description?: string;
   interstitial?: InterstitialMode;
-  redirectDelay?: number | null; // number = per-link override, null = reset to global
+  redirectDelay?: number | null;
 }
 
 function applyLinkPayload(
@@ -132,12 +175,32 @@ function applyLinkPayload(
   };
   if (body.interstitial === "always") base.interstitial = true;
   else if (body.interstitial === "never") base.interstitial = false;
-  // 'default' or absent → interstitial field omitted (use global)
   if (typeof body.redirectDelay === "number") {
     base.redirectDelay = Math.max(0, body.redirectDelay);
   }
-  // null or absent → redirectDelay field omitted (resolve falls back to global)
   return base;
+}
+
+function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
+  const {
+    url,
+    createdAt,
+    title,
+    description,
+    interstitial,
+    redirectDelay,
+    aliases,
+  } = data;
+  return {
+    id,
+    url,
+    createdAt,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(interstitial !== undefined ? { interstitial } : {}),
+    ...(redirectDelay !== undefined ? { redirectDelay } : {}),
+    ...(aliases?.length ? { aliases } : {}),
+  };
 }
 
 async function handleAPI(
@@ -149,7 +212,9 @@ async function handleAPI(
 
   // GET /api/status
   if (pathname === "/api/status" && method === "GET") {
-    return json({ setup: (await env.LINKS.get("__admin__")) !== null });
+    const noTokenCheck = env.KRNLGO_NO_TOKEN !== undefined;
+    const setup = noTokenCheck || (await env.LINKS.get("__admin__")) !== null;
+    return json({ setup, noTokenCheck });
   }
 
   // POST /api/setup
@@ -191,21 +256,41 @@ async function handleAPI(
   // GET /api/resolve/:id  (public — used by the interstitial SPA page)
   const resolveMatch = pathname.match(/^\/api\/resolve\/([a-zA-Z0-9_-]+)$/);
   if (resolveMatch && method === "GET") {
-    const raw = await env.LINKS.get(`link:${resolveMatch[1]}`);
-    if (!raw) return json({ error: "Not found" }, 404);
-    const link = JSON.parse(raw) as LinkData;
+    const resolved = await resolveToLink(env, resolveMatch[1]);
+    if (!resolved) return json({ error: "Not found" }, 404);
     const config = await getConfig(env);
     return json({
-      url: link.url,
-      title: link.title ?? config.interstitialTitle,
-      description: link.description ?? config.interstitialDescription,
-      redirectDelay: link.redirectDelay ?? config.redirectDelay,
+      url: resolved.data.url,
+      title: resolved.data.title ?? config.interstitialTitle,
+      description: resolved.data.description ?? config.interstitialDescription,
+      redirectDelay: resolved.data.redirectDelay ?? config.redirectDelay,
     });
   }
 
   // All routes below require auth
   if (!(await getAuth(request, env)))
     return json({ error: "Unauthorized" }, 401);
+
+  // POST /api/password — change admin password
+  if (pathname === "/api/password" && method === "POST") {
+    const raw = await env.LINKS.get("__admin__");
+    if (!raw) return json({ error: "Not configured" }, 400);
+    const { currentPassword, newPassword } = (await request.json()) as {
+      currentPassword: string;
+      newPassword: string;
+    };
+    const { hash, salt } = JSON.parse(raw) as AdminData;
+    if (!(await verifyPassword(currentPassword, hash, salt)))
+      return json({ error: "Current password is incorrect" }, 401);
+    if (!newPassword || newPassword.length < 8)
+      return json({ error: "New password must be at least 8 characters" }, 400);
+    const { hash: newHash, salt: newSalt } = await hashPassword(newPassword);
+    await env.LINKS.put(
+      "__admin__",
+      JSON.stringify({ hash: newHash, salt: newSalt } satisfies AdminData),
+    );
+    return json({ ok: true });
+  }
 
   // GET /api/config
   if (pathname === "/api/config" && method === "GET") {
@@ -223,28 +308,17 @@ async function handleAPI(
   // GET /api/links
   if (pathname === "/api/links" && method === "GET") {
     const list = await env.LINKS.list({ prefix: "link:" });
-    const links = await Promise.all(
-      list.keys.map(async (key) => {
-        const raw = await env.LINKS.get(key.name);
-        const {
-          url,
-          createdAt,
-          title,
-          description,
-          interstitial,
-          redirectDelay,
-        } = (raw ? JSON.parse(raw) : {}) as LinkData;
-        return {
-          id: key.name.slice(5),
-          url,
-          createdAt,
-          ...(title ? { title } : {}),
-          ...(description ? { description } : {}),
-          ...(interstitial !== undefined ? { interstitial } : {}),
-          ...(redirectDelay !== undefined ? { redirectDelay } : {}),
-        };
-      }),
-    );
+    const links = (
+      await Promise.all(
+        list.keys.map(async (key) => {
+          const raw = await env.LINKS.get(key.name);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw) as LinkData | AliasData;
+          if (isAlias(parsed)) return null; // skip alias entries
+          return linkToResponse(key.name.slice(5), parsed);
+        }),
+      )
+    ).filter(Boolean);
     return json(links);
   }
 
@@ -265,9 +339,83 @@ async function handleAPI(
       );
     if (await env.LINKS.get(`link:${id}`))
       return json({ error: "ID already exists" }, 409);
+
+    // Auto-merge: if the URL already exists, create an alias instead
+    const existing = await findLinkByUrl(env, body.url);
+    if (existing) {
+      await env.LINKS.put(
+        `link:${id}`,
+        JSON.stringify({ aliasOf: existing.id } satisfies AliasData),
+      );
+      const updatedData: LinkData = {
+        ...existing.data,
+        aliases: [...(existing.data.aliases ?? []), id],
+      };
+      await env.LINKS.put(`link:${existing.id}`, JSON.stringify(updatedData));
+      return json(
+        {
+          ...linkToResponse(existing.id, updatedData),
+          merged: true,
+          aliasId: id,
+        },
+        201,
+      );
+    }
+
     const link = applyLinkPayload({}, body);
     await env.LINKS.put(`link:${id}`, JSON.stringify(link));
     return json({ id, ...link }, 201);
+  }
+
+  // /api/links/:id/aliases routes
+  const aliasesMatch = pathname.match(
+    /^\/api\/links\/([a-zA-Z0-9_-]+)\/aliases(?:\/([a-zA-Z0-9_-]+))?$/,
+  );
+  if (aliasesMatch) {
+    const primaryId = aliasesMatch[1];
+    const aliasId = aliasesMatch[2];
+
+    // POST /api/links/:id/aliases — add a manual alias
+    if (!aliasId && method === "POST") {
+      const primaryRaw = await env.LINKS.get(`link:${primaryId}`);
+      if (!primaryRaw) return json({ error: "Not found" }, 404);
+      const primary = JSON.parse(primaryRaw) as LinkData | AliasData;
+      if (isAlias(primary))
+        return json({ error: "Cannot add alias to an alias" }, 400);
+      const { alias } = (await request.json()) as { alias: string };
+      const cleanAlias = alias?.trim();
+      if (!cleanAlias || !/^[a-zA-Z0-9_-]{1,50}$/.test(cleanAlias))
+        return json(
+          { error: "Alias ID must be 1-50 chars: a-z, A-Z, 0-9, _ or -" },
+          400,
+        );
+      if (await env.LINKS.get(`link:${cleanAlias}`))
+        return json({ error: "ID already exists" }, 409);
+      await env.LINKS.put(
+        `link:${cleanAlias}`,
+        JSON.stringify({ aliasOf: primaryId } satisfies AliasData),
+      );
+      const updated: LinkData = {
+        ...primary,
+        aliases: [...(primary.aliases ?? []), cleanAlias],
+      };
+      await env.LINKS.put(`link:${primaryId}`, JSON.stringify(updated));
+      return json(linkToResponse(primaryId, updated));
+    }
+
+    // DELETE /api/links/:id/aliases/:aliasId — remove an alias
+    if (aliasId && method === "DELETE") {
+      const primaryRaw = await env.LINKS.get(`link:${primaryId}`);
+      if (!primaryRaw) return json({ error: "Not found" }, 404);
+      const primary = JSON.parse(primaryRaw) as LinkData;
+      await env.LINKS.delete(`link:${aliasId}`);
+      const updated: LinkData = {
+        ...primary,
+        aliases: (primary.aliases ?? []).filter((a) => a !== aliasId),
+      };
+      await env.LINKS.put(`link:${primaryId}`, JSON.stringify(updated));
+      return json(linkToResponse(primaryId, updated));
+    }
   }
 
   // /api/links/:id routes
@@ -276,30 +424,14 @@ async function handleAPI(
     const id = linkMatch[1];
 
     if (method === "GET") {
-      const raw = await env.LINKS.get(`link:${id}`);
-      if (!raw) return json({ error: "Not found" }, 404);
-      const {
-        url,
-        createdAt,
-        title,
-        description,
-        interstitial,
-        redirectDelay,
-      } = JSON.parse(raw) as LinkData;
-      return json({
-        id,
-        url,
-        createdAt,
-        ...(title ? { title } : {}),
-        ...(description ? { description } : {}),
-        ...(interstitial !== undefined ? { interstitial } : {}),
-        ...(redirectDelay !== undefined ? { redirectDelay } : {}),
-      });
+      const resolved = await resolveToLink(env, id);
+      if (!resolved) return json({ error: "Not found" }, 404);
+      return json(linkToResponse(resolved.id, resolved.data));
     }
 
     if (method === "PUT") {
-      const raw = await env.LINKS.get(`link:${id}`);
-      if (!raw) return json({ error: "Not found" }, 404);
+      const resolved = await resolveToLink(env, id);
+      if (!resolved) return json({ error: "Not found" }, 404);
       const body = (await request.json()) as LinkPayload;
       if (!body.url) return json({ error: "URL required" }, 400);
       try {
@@ -307,13 +439,40 @@ async function handleAPI(
       } catch {
         return json({ error: "Invalid URL" }, 400);
       }
-      const existing = JSON.parse(raw) as LinkData;
-      const updated = applyLinkPayload(existing, body);
-      await env.LINKS.put(`link:${id}`, JSON.stringify(updated));
-      return json({ id, ...updated });
+      const updated = applyLinkPayload(resolved.data, body);
+      if (resolved.data.aliases?.length)
+        updated.aliases = resolved.data.aliases;
+      await env.LINKS.put(`link:${resolved.id}`, JSON.stringify(updated));
+      return json(linkToResponse(resolved.id, updated));
     }
 
     if (method === "DELETE") {
+      const raw = await env.LINKS.get(`link:${id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as LinkData | AliasData;
+        if (isAlias(parsed)) {
+          // Remove this alias from the primary's list
+          const primaryRaw = await env.LINKS.get(`link:${parsed.aliasOf}`);
+          if (primaryRaw) {
+            const primary = JSON.parse(primaryRaw) as LinkData;
+            const updated: LinkData = {
+              ...primary,
+              aliases: (primary.aliases ?? []).filter((a) => a !== id),
+            };
+            await env.LINKS.put(
+              `link:${parsed.aliasOf}`,
+              JSON.stringify(updated),
+            );
+          }
+        } else {
+          // Delete all alias entries pointing to this primary
+          await Promise.all(
+            (parsed.aliases ?? []).map((alias) =>
+              env.LINKS.delete(`link:${alias}`),
+            ),
+          );
+        }
+      }
       await env.LINKS.delete(`link:${id}`);
       return json({ ok: true });
     }
@@ -331,16 +490,14 @@ export default {
     // Short link: single path segment, alphanumeric + _ -
     if (pathname !== "/" && /^\/[a-zA-Z0-9_-]+$/.test(pathname)) {
       const id = pathname.slice(1);
-      const raw = await env.LINKS.get(`link:${id}`);
-      if (raw) {
-        const link = JSON.parse(raw) as LinkData;
+      const resolved = await resolveToLink(env, id);
+      if (resolved) {
         const config = await getConfig(env);
         const showInterstitial =
-          link.interstitial ?? config.defaultInterstitial;
+          resolved.data.interstitial ?? config.defaultInterstitial;
         if (!showInterstitial) {
-          return Response.redirect(link.url, 302);
+          return Response.redirect(resolved.data.url, 302);
         }
-        // Interstitial enabled → serve SPA, which will call /api/resolve/:id
         return serveIndex(request, env);
       }
       // Not found → serve SPA (shows creation form)

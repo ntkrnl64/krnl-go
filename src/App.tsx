@@ -47,12 +47,10 @@ export default function App() {
   const styles = useStyles();
   const [state, setState] = useState<AppState>("loading");
   const [resolved, setResolved] = useState<ResolvedLink | null>(null);
+  const [noTokenCheck, setNoTokenCheck] = useState(false);
 
   useEffect(() => {
     async function init() {
-      // If visiting a short link, first check if it resolves (public, no auth needed).
-      // The worker only serves the SPA here if the link has interstitial enabled —
-      // direct redirects are handled server-side and never reach this code.
       if (shortId) {
         try {
           const link = await resolveLink(shortId);
@@ -62,12 +60,17 @@ export default function App() {
             return;
           }
         } catch {
-          // Network error — fall through to normal auth flow
+          // Network error — fall through
         }
       }
 
       try {
-        const { setup } = await checkStatus();
+        const { setup, noTokenCheck: ntc } = await checkStatus();
+        if (ntc) {
+          setNoTokenCheck(true);
+          setState("ready");
+          return;
+        }
         if (!setup) {
           setState("needs-setup");
           return;
@@ -107,7 +110,9 @@ export default function App() {
         {state === "needs-login" && (
           <LoginCard onLogin={() => setState("ready")} />
         )}
-        {state === "ready" && !shortId && <AdminPage onLogout={onLogout} />}
+        {state === "ready" && !shortId && (
+          <AdminPage onLogout={onLogout} noTokenCheck={noTokenCheck} />
+        )}
         {state === "ready" && shortId && (
           <CreateLinkPage id={shortId} onLogout={onLogout} />
         )}

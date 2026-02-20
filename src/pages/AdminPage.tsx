@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AddRegular,
   LinkRegular,
+  LockClosedRegular,
   SearchRegular,
   SettingsRegular,
   SignOutRegular,
@@ -15,8 +16,14 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { type ShortLink, listLinks, logout } from "../api";
+import {
+  type CreateLinkResult,
+  type ShortLink,
+  listLinks,
+  logout,
+} from "../api";
 import { CODE_FONT } from "../components/LinkSlug";
+import ChangePasswordDialog from "./admin/ChangePasswordDialog";
 import DeleteDialog from "./admin/DeleteDialog";
 import EditLinkDialog from "./admin/EditLinkDialog";
 import LinksTable from "./admin/LinksTable";
@@ -106,13 +113,19 @@ const useStyles = makeStyles({
   },
 });
 
-export default function AdminPage({ onLogout }: { onLogout: () => void }) {
+interface Props {
+  onLogout: () => void;
+  noTokenCheck: boolean;
+}
+
+export default function AdminPage({ onLogout, noTokenCheck }: Props) {
   const styles = useStyles();
   const [links, setLinks] = useState<ShortLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editLink, setEditLink] = useState<ShortLink | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -132,13 +145,23 @@ export default function AdminPage({ onLogout }: { onLogout: () => void }) {
     onLogout();
   }
 
+  function handleCreated(link: CreateLinkResult) {
+    if (link.merged) {
+      // URL already existed — update the primary link in-place (alias was added)
+      setLinks((prev) => prev.map((l) => (l.id === link.id ? link : l)));
+    } else {
+      setLinks((prev) => [...prev, link]);
+    }
+  }
+
   const q = search.trim().toLowerCase();
   const filteredLinks = q
     ? links.filter(
         (l) =>
           l.id.toLowerCase().includes(q) ||
           l.url.toLowerCase().includes(q) ||
-          (l.title ?? "").toLowerCase().includes(q),
+          (l.title ?? "").toLowerCase().includes(q) ||
+          (l.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
       )
     : links;
 
@@ -164,13 +187,24 @@ export default function AdminPage({ onLogout }: { onLogout: () => void }) {
           >
             Settings
           </Button>
-          <Button
-            appearance="subtle"
-            icon={<SignOutRegular />}
-            onClick={() => void handleLogout()}
-          >
-            Sign out
-          </Button>
+          {!noTokenCheck && (
+            <Button
+              appearance="subtle"
+              icon={<LockClosedRegular />}
+              onClick={() => setChangePasswordOpen(true)}
+            >
+              Password
+            </Button>
+          )}
+          {!noTokenCheck && (
+            <Button
+              appearance="subtle"
+              icon={<SignOutRegular />}
+              onClick={() => void handleLogout()}
+            >
+              Sign out
+            </Button>
+          )}
         </div>
       </header>
 
@@ -198,7 +232,7 @@ export default function AdminPage({ onLogout }: { onLogout: () => void }) {
         <div className={styles.searchRow}>
           <Input
             contentBefore={<SearchRegular />}
-            placeholder="Search by ID, URL, or title…"
+            placeholder="Search by ID, URL, title, or alias…"
             value={search}
             onChange={(_, d) => setSearch(d.value)}
             style={{ width: "100%", maxWidth: "400px" }}
@@ -256,7 +290,7 @@ export default function AdminPage({ onLogout }: { onLogout: () => void }) {
       <NewLinkDialog
         open={newOpen}
         onOpenChange={setNewOpen}
-        onCreated={(link) => setLinks((prev) => [...prev, link])}
+        onCreated={handleCreated}
       />
       <EditLinkDialog
         link={editLink}
@@ -273,6 +307,10 @@ export default function AdminPage({ onLogout }: { onLogout: () => void }) {
         onDeleted={(id) => setLinks((prev) => prev.filter((l) => l.id !== id))}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+      />
     </div>
   );
 }
