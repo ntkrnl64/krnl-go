@@ -2,6 +2,7 @@ import {
   Badge,
   Button,
   Caption1,
+  Checkbox,
   Table,
   TableBody,
   TableCell,
@@ -49,11 +50,19 @@ const useStyles = makeStyles({
     display: "flex",
     gap: tokens.spacingHorizontalXS,
   },
+  checkCell: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
 
 interface Props {
   links: ShortLink[];
   origin: string;
+  selected: Set<string>;
+  onSelectionChange: (id: string, checked: boolean) => void;
+  onSelectAll: (checked: boolean) => void;
   onEdit: (link: ShortLink) => void;
   onDelete: (id: string) => void;
 }
@@ -82,7 +91,15 @@ const columns: TableColumnDefinition<ShortLink>[] = [
   }),
 ];
 
-export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
+export default function LinksTable({
+  links,
+  origin,
+  selected,
+  onSelectionChange,
+  onSelectAll,
+  onEdit,
+  onDelete,
+}: Props) {
   const styles = useStyles();
 
   const {
@@ -98,6 +115,10 @@ export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
   ]);
 
   const rows = sort(getRows());
+  const visibleIds = rows.map(({ item }) => item.id);
+  const allSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someSelected = visibleIds.some((id) => selected.has(id));
 
   return (
     <Table
@@ -106,6 +127,15 @@ export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
     >
       <TableHeader>
         <TableRow>
+          <TableHeaderCell style={{ width: "40px" }}>
+            <div className={styles.checkCell}>
+              <Checkbox
+                aria-label="Select all"
+                checked={allSelected ? true : someSelected ? "mixed" : false}
+                onChange={(_, d) => onSelectAll(d.checked as boolean)}
+              />
+            </div>
+          </TableHeaderCell>
           <TableHeaderCell
             style={{ width: "160px" }}
             sortDirection={getSortDirection("id")}
@@ -139,7 +169,18 @@ export default function LinksTable({ links, origin, onEdit, onDelete }: Props) {
       </TableHeader>
       <TableBody>
         {rows.map(({ item: link }) => (
-          <TableRow key={link.id}>
+          <TableRow key={link.id} aria-selected={selected.has(link.id)}>
+            <TableCell>
+              <div className={styles.checkCell}>
+                <Checkbox
+                  aria-label={`Select ${link.id}`}
+                  checked={selected.has(link.id)}
+                  onChange={(_, d) =>
+                    onSelectionChange(link.id, d.checked as boolean)
+                  }
+                />
+              </div>
+            </TableCell>
             <TableCell>
               <TableCellLayout>
                 <LinkSlug id={link.id} size="sm" />

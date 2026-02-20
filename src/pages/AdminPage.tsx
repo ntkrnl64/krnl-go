@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AddRegular,
+  DeleteRegular,
+  DismissRegular,
   LinkRegular,
   LockClosedRegular,
+  MergeRegular,
   SearchRegular,
   SettingsRegular,
   SignOutRegular,
@@ -19,8 +22,10 @@ import {
 import {
   type CreateLinkResult,
   type ShortLink,
+  deleteLink,
   listLinks,
   logout,
+  mergeLinks,
 } from "../api";
 import { CODE_FONT } from "../components/LinkSlug";
 import ChangePasswordDialog from "./admin/ChangePasswordDialog";
@@ -89,6 +94,23 @@ const useStyles = makeStyles({
   searchRow: {
     marginBottom: tokens.spacingVerticalL,
   },
+  actionBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    marginBottom: tokens.spacingVerticalL,
+    backgroundColor: tokens.colorNeutralBackground3,
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  actionSep: {
+    width: "1px",
+    height: "20px",
+    backgroundColor: tokens.colorNeutralStroke2,
+    margin: `0 ${tokens.spacingHorizontalXS}`,
+    flexShrink: "0",
+  },
   center: {
     display: "flex",
     justifyContent: "center",
@@ -128,6 +150,8 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editLink, setEditLink] = useState<ShortLink | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -147,7 +171,6 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
 
   function handleCreated(link: CreateLinkResult) {
     if (link.merged) {
-      // URL already existed — update the primary link in-place (alias was added)
       setLinks((prev) => prev.map((l) => (l.id === link.id ? link : l)));
     } else {
       setLinks((prev) => [...prev, link]);
@@ -164,6 +187,50 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
           (l.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
       )
     : links;
+
+  const allVisibleSelected =
+    filteredLinks.length > 0 && filteredLinks.every((l) => selected.has(l.id));
+
+  function handleSelectionChange(id: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function handleSelectAll(checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      filteredLinks.forEach((l) =>
+        checked ? next.add(l.id) : next.delete(l.id),
+      );
+      return next;
+    });
+  }
+
+  async function handleBulkMerge() {
+    setBulkLoading(true);
+    try {
+      await mergeLinks([...selected]);
+      setSelected(new Set());
+      load();
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    setBulkLoading(true);
+    try {
+      await Promise.all([...selected].map((id) => deleteLink(id)));
+      setLinks((prev) => prev.filter((l) => !selected.has(l.id)));
+      setSelected(new Set());
+    } finally {
+      setBulkLoading(false);
+    }
+  }
 
   const interstitialCount = links.filter((l) => l.interstitial === true).length;
   const origin = window.location.origin;
@@ -239,6 +306,53 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
           />
         </div>
 
+        {selected.size > 0 && (
+          <div className={styles.actionBar}>
+            <Caption1
+              style={{
+                color: tokens.colorNeutralForeground2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {selected.size} {selected.size === 1 ? "link" : "links"} selected
+            </Caption1>
+            <div className={styles.actionSep} />
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={bulkLoading ? <Spinner size="tiny" /> : <MergeRegular />}
+              disabled={bulkLoading}
+              onClick={() => void handleBulkMerge()}
+            >
+              Merge
+            </Button>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<DeleteRegular />}
+              disabled={bulkLoading}
+              onClick={() => void handleBulkDelete()}
+            >
+              Delete
+            </Button>
+            <div style={{ flex: "1" }} />
+            <Button
+              size="small"
+              appearance="subtle"
+              onClick={() => handleSelectAll(!allVisibleSelected)}
+            >
+              {allVisibleSelected ? "Deselect all" : "Select all"}
+            </Button>
+            <Button
+              size="small"
+              appearance="transparent"
+              icon={<DismissRegular />}
+              aria-label="Clear selection"
+              onClick={() => setSelected(new Set())}
+            />
+          </div>
+        )}
+
         {loading ? (
           <div className={styles.center}>
             <Spinner />
@@ -280,6 +394,9 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
             <LinksTable
               links={filteredLinks}
               origin={origin}
+              selected={selected}
+              onSelectionChange={handleSelectionChange}
+              onSelectAll={handleSelectAll}
               onEdit={(link) => setEditLink(link)}
               onDelete={(id) => setDeleteId(id)}
             />

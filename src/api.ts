@@ -175,6 +175,17 @@ export async function resolveLink(id: string): Promise<ResolvedLink | null> {
   return res.json() as Promise<ResolvedLink>;
 }
 
+export async function mergeLinks(ids?: string[]): Promise<{ merged: number }> {
+  const res = await fetch("/api/merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
+  const data = (await res.json()) as { merged: number; error?: string };
+  if (!res.ok) throw new Error(data.error ?? "Failed to merge");
+  return data;
+}
+
 export async function getConfig(): Promise<GlobalConfig> {
   const res = await fetch("/api/config", { headers: authHeaders() });
   return res.json() as Promise<GlobalConfig>;

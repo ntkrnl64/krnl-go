@@ -271,6 +271,71 @@ async function handleAPI(
   if (!(await getAuth(request, env)))
     return json({ error: "Unauthorized" }, 401);
 
+  // POST /api/merge — consolidate duplicate links into aliases
+  // Body: { ids?: string[] }  — if ids provided, only consider those primary links
+  if (pathname === "/api/merge" && method === "POST") {
+    let scopedIds: string[] | undefined;
+    try {
+      const body = (await request.json()) as { ids?: string[] };
+      if (Array.isArray(body.ids)) scopedIds = body.ids;
+    } catch {
+      /* no body */
+    }
+
+    const list = await env.LINKS.list({ prefix: "link:" });
+
+    // Gather primary links, optionally scoped to the provided IDs
+    const primaries: Array<{ id: string; data: LinkData }> = [];
+    for (const key of list.keys) {
+      const id = key.name.slice(5);
+      if (scopedIds && !scopedIds.includes(id)) continue;
+      const raw = await env.LINKS.get(key.name);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as LinkData | AliasData;
+      if (!isAlias(parsed)) primaries.push({ id, data: parsed });
+    }
+
+    // Group by URL
+    const byUrl = new Map<string, Array<{ id: string; data: LinkData }>>();
+    for (const p of primaries) {
+      const group = byUrl.get(p.data.url) ?? [];
+      group.push(p);
+      byUrl.set(p.data.url, group);
+    }
+
+    let merged = 0;
+    for (const group of byUrl.values()) {
+      if (group.length < 2) continue;
+      // Oldest entry becomes (or stays) the primary
+      group.sort((a, b) => a.data.createdAt - b.data.createdAt);
+      const primary = group[0];
+      const newAliases = [...(primary.data.aliases ?? [])];
+
+      for (const dup of group.slice(1)) {
+        const dupAliases = dup.data.aliases ?? [];
+        // Convert the duplicate itself to an alias entry
+        await env.LINKS.put(
+          `link:${dup.id}`,
+          JSON.stringify({ aliasOf: primary.id } satisfies AliasData),
+        );
+        // Re-point any of the duplicate's own aliases to the new primary
+        for (const aliasId of dupAliases) {
+          await env.LINKS.put(
+            `link:${aliasId}`,
+            JSON.stringify({ aliasOf: primary.id } satisfies AliasData),
+          );
+        }
+        newAliases.push(dup.id, ...dupAliases);
+        merged++;
+      }
+
+      const updatedPrimary: LinkData = { ...primary.data, aliases: newAliases };
+      await env.LINKS.put(`link:${primary.id}`, JSON.stringify(updatedPrimary));
+    }
+
+    return json({ merged });
+  }
+
   // POST /api/password — change admin password
   if (pathname === "/api/password" && method === "POST") {
     const raw = await env.LINKS.get("__admin__");
