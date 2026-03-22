@@ -18,9 +18,17 @@
 			"custom_domain": true
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "krnl-go",
+			"database_id": "13422f8d-582a-4307-9e7c-d590200c0b32",
+			"migrations_dir": "migrations"
+		}
+	],
 	"kv_namespaces": [
 		{
-			"binding": "LINKS",
+			"binding": "LEGACY_KV",
 			"id": "f847c31492a54f76b225a3c989ee7cfa"
 		}
 	]

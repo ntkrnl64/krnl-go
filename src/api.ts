@@ -201,3 +201,23 @@ export async function saveConfig(
   });
   return res.json() as Promise<GlobalConfig>;
 }
+
+export interface MigrateResult {
+  links: number;
+  aliases: number;
+  admin: boolean;
+  config: boolean;
+}
+
+export async function migrateFromKV(): Promise<MigrateResult> {
+  const res = await fetch("/api/migrate-kv", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+  const data = (await res.json()) as {
+    migrated?: MigrateResult;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(data.error ?? "Migration failed");
+  return data.migrated!;
+}

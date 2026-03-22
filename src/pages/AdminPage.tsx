@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AddRegular,
+  DatabaseRegular,
   DeleteRegular,
   DismissRegular,
   LinkRegular,
@@ -33,6 +34,7 @@ import DeleteDialog from "./admin/DeleteDialog";
 import EditLinkDialog from "./admin/EditLinkDialog";
 import LinksTable from "./admin/LinksTable";
 import NewLinkDialog from "./admin/NewLinkDialog";
+import MigrateKVDialog from "./admin/MigrateKVDialog";
 import SettingsDialog from "./admin/SettingsDialog";
 
 const useStyles = makeStyles({
@@ -148,6 +150,7 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [migrateOpen, setMigrateOpen] = useState(false);
   const [editLink, setEditLink] = useState<ShortLink | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -246,6 +249,13 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
             onClick={() => setNewOpen(true)}
           >
             New link
+          </Button>
+          <Button
+            appearance="subtle"
+            icon={<DatabaseRegular />}
+            onClick={() => setMigrateOpen(true)}
+          >
+            Migrate KV
           </Button>
           <Button
             appearance="subtle"
@@ -422,6 +432,11 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
         id={deleteId}
         onClose={() => setDeleteId(null)}
         onDeleted={(id) => setLinks((prev) => prev.filter((l) => l.id !== id))}
+      />
+      <MigrateKVDialog
+        open={migrateOpen}
+        onOpenChange={setMigrateOpen}
+        onMigrated={load}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <ChangePasswordDialog

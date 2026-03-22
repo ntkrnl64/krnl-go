@@ -10,15 +10,6 @@ interface LinkData {
   aliases?: string[]; // other IDs that redirect here
 }
 
-interface AliasData {
-  aliasOf: string; // primary link ID
-}
-
-interface AdminData {
-  hash: string;
-  salt: string;
-}
-
 interface GlobalConfig {
   defaultInterstitial: boolean;
   interstitialTitle: string;
@@ -32,10 +23,6 @@ const DEFAULT_CONFIG: GlobalConfig = {
   interstitialDescription: "You are about to visit an external website.",
   redirectDelay: 0,
 };
-
-function isAlias(data: unknown): data is AliasData {
-  return typeof data === "object" && data !== null && "aliasOf" in data;
-}
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -104,7 +91,13 @@ async function getAuth(request: Request, env: Env): Promise<boolean> {
   if (env.KRNLGO_NO_TOKEN !== undefined) return true;
   const auth = request.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return false;
-  return (await env.LINKS.get(`__session__:${auth.slice(7)}`)) !== null;
+  const token = auth.slice(7);
+  const row = await env.DB.prepare(
+    "SELECT 1 FROM sessions WHERE token = ? AND expires_at > ?",
+  )
+    .bind(token, Date.now())
+    .first();
+  return row !== null;
 }
 
 async function serveIndex(request: Request, env: Env): Promise<Response> {
@@ -114,9 +107,59 @@ async function serveIndex(request: Request, env: Env): Promise<Response> {
 }
 
 async function getConfig(env: Env): Promise<GlobalConfig> {
-  const raw = await env.LINKS.get("__config__");
-  if (!raw) return DEFAULT_CONFIG;
-  return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<GlobalConfig>) };
+  const row = await env.DB.prepare("SELECT * FROM config WHERE id = 1").first<{
+    default_interstitial: number;
+    interstitial_title: string;
+    interstitial_description: string;
+    redirect_delay: number;
+  }>();
+  if (!row) return DEFAULT_CONFIG;
+  return {
+    defaultInterstitial: row.default_interstitial === 1,
+    interstitialTitle: row.interstitial_title,
+    interstitialDescription: row.interstitial_description,
+    redirectDelay: row.redirect_delay,
+  };
+}
+
+/** Loads aliases for a primary link. */
+async function getAliases(env: Env, primaryId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT alias_id FROM aliases WHERE primary_id = ?",
+  )
+    .bind(primaryId)
+    .all<{ alias_id: string }>();
+  return results.map((r) => r.alias_id);
+}
+
+/** Loads a LinkData object from the links table + its aliases. */
+async function getLink(env: Env, id: string): Promise<LinkData | null> {
+  const row = await env.DB.prepare("SELECT * FROM links WHERE id = ?")
+    .bind(id)
+    .first<{
+      id: string;
+      url: string;
+      created_at: number;
+      title: string | null;
+      description: string | null;
+      interstitial: number | null;
+      redirect_delay: number | null;
+    }>();
+  if (!row) return null;
+  const aliases = await getAliases(env, id);
+  return {
+    url: row.url,
+    createdAt: row.created_at,
+    ...(row.title ? { title: row.title } : {}),
+    ...(row.description ? { description: row.description } : {}),
+    ...(row.interstitial !== null
+      ? { interstitial: row.interstitial === 1 }
+      : {}),
+    ...(row.redirect_delay !== null
+      ? { redirectDelay: row.redirect_delay }
+      : {}),
+    ...(aliases.length ? { aliases } : {}),
+  };
 }
 
 /** Resolves an ID to its primary link data, following aliases one level. */
@@ -124,32 +167,31 @@ async function resolveToLink(
   env: Env,
   id: string,
 ): Promise<{ id: string; data: LinkData } | null> {
-  const raw = await env.LINKS.get(`link:${id}`);
-  if (!raw) return null;
-  const parsed = JSON.parse(raw) as LinkData | AliasData;
-  if (isAlias(parsed)) {
-    const primaryRaw = await env.LINKS.get(`link:${parsed.aliasOf}`);
-    if (!primaryRaw) return null;
-    return { id: parsed.aliasOf, data: JSON.parse(primaryRaw) as LinkData };
-  }
-  return { id, data: parsed };
+  // Check if it's an alias first
+  const alias = await env.DB.prepare(
+    "SELECT primary_id FROM aliases WHERE alias_id = ?",
+  )
+    .bind(id)
+    .first<{ primary_id: string }>();
+
+  const primaryId = alias ? alias.primary_id : id;
+  const data = await getLink(env, primaryId);
+  if (!data) return null;
+  return { id: primaryId, data };
 }
 
-/** Scans all primary links to find one matching a URL (used for auto-merge). */
+/** Finds a primary link matching a URL (used for auto-merge). */
 async function findLinkByUrl(
   env: Env,
   url: string,
 ): Promise<{ id: string; data: LinkData } | null> {
-  const list = await env.LINKS.list({ prefix: "link:" });
-  for (const key of list.keys) {
-    const raw = await env.LINKS.get(key.name);
-    if (!raw) continue;
-    const parsed = JSON.parse(raw) as LinkData | AliasData;
-    if (!isAlias(parsed) && parsed.url === url) {
-      return { id: key.name.slice(5), data: parsed };
-    }
-  }
-  return null;
+  const row = await env.DB.prepare("SELECT id FROM links WHERE url = ? LIMIT 1")
+    .bind(url)
+    .first<{ id: string }>();
+  if (!row) return null;
+  const data = await getLink(env, row.id);
+  if (!data) return null;
+  return { id: row.id, data };
 }
 
 type InterstitialMode = "default" | "always" | "never";
@@ -181,6 +223,30 @@ function applyLinkPayload(
   return base;
 }
 
+/** Upserts a LinkData into the links table. */
+async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       url = excluded.url,
+       title = excluded.title,
+       description = excluded.description,
+       interstitial = excluded.interstitial,
+       redirect_delay = excluded.redirect_delay`,
+  )
+    .bind(
+      id,
+      data.url,
+      data.createdAt,
+      data.title ?? null,
+      data.description ?? null,
+      data.interstitial !== undefined ? (data.interstitial ? 1 : 0) : null,
+      data.redirectDelay ?? null,
+    )
+    .run();
+}
+
 function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
   const {
     url,
@@ -210,38 +276,52 @@ async function handleAPI(
 ): Promise<Response> {
   const method = request.method;
 
+  // Clean up expired sessions opportunistically
+  env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?")
+    .bind(Date.now())
+    .run();
+
   // GET /api/status
   if (pathname === "/api/status" && method === "GET") {
     const noTokenCheck = env.KRNLGO_NO_TOKEN !== undefined;
-    const setup = noTokenCheck || (await env.LINKS.get("__admin__")) !== null;
+    const admin = await env.DB.prepare(
+      "SELECT 1 FROM admin WHERE id = 1",
+    ).first();
+    const setup = noTokenCheck || admin !== null;
     return json({ setup, noTokenCheck });
   }
 
   // POST /api/setup
   if (pathname === "/api/setup" && method === "POST") {
-    if (await env.LINKS.get("__admin__"))
-      return json({ error: "Already set up" }, 400);
+    const existing = await env.DB.prepare(
+      "SELECT 1 FROM admin WHERE id = 1",
+    ).first();
+    if (existing) return json({ error: "Already set up" }, 400);
     const { password } = (await request.json()) as { password: string };
     if (!password || password.length < 8)
       return json({ error: "Password must be at least 8 characters" }, 400);
     const { hash, salt } = await hashPassword(password);
-    await env.LINKS.put(
-      "__admin__",
-      JSON.stringify({ hash, salt } satisfies AdminData),
-    );
+    await env.DB.prepare("INSERT INTO admin (id, hash, salt) VALUES (1, ?, ?)")
+      .bind(hash, salt)
+      .run();
     return json({ ok: true });
   }
 
   // POST /api/auth
   if (pathname === "/api/auth" && method === "POST") {
-    const raw = await env.LINKS.get("__admin__");
-    if (!raw) return json({ error: "Not configured" }, 400);
+    const row = await env.DB.prepare(
+      "SELECT hash, salt FROM admin WHERE id = 1",
+    ).first<{ hash: string; salt: string }>();
+    if (!row) return json({ error: "Not configured" }, 400);
     const { password } = (await request.json()) as { password: string };
-    const { hash, salt } = JSON.parse(raw) as AdminData;
-    if (!(await verifyPassword(password, hash, salt)))
+    if (!(await verifyPassword(password, row.hash, row.salt)))
       return json({ error: "Invalid password" }, 401);
     const token = generateToken();
-    await env.LINKS.put(`__session__:${token}`, "1", { expirationTtl: 86400 });
+    await env.DB.prepare(
+      "INSERT INTO sessions (token, expires_at) VALUES (?, ?)",
+    )
+      .bind(token, Date.now() + 86400 * 1000)
+      .run();
     return json({ token });
   }
 
@@ -249,7 +329,9 @@ async function handleAPI(
   if (pathname === "/api/logout" && method === "POST") {
     const auth = request.headers.get("Authorization");
     if (auth?.startsWith("Bearer "))
-      await env.LINKS.delete(`__session__:${auth.slice(7)}`);
+      await env.DB.prepare("DELETE FROM sessions WHERE token = ?")
+        .bind(auth.slice(7))
+        .run();
     return json({ ok: true });
   }
 
@@ -272,7 +354,6 @@ async function handleAPI(
     return json({ error: "Unauthorized" }, 401);
 
   // POST /api/merge — consolidate duplicate links into aliases
-  // Body: { ids?: string[] }  — if ids provided, only consider those primary links
   if (pathname === "/api/merge" && method === "POST") {
     let scopedIds: string[] | undefined;
     try {
@@ -282,55 +363,59 @@ async function handleAPI(
       /* no body */
     }
 
-    const list = await env.LINKS.list({ prefix: "link:" });
-
-    // Gather primary links, optionally scoped to the provided IDs
-    const primaries: Array<{ id: string; data: LinkData }> = [];
-    for (const key of list.keys) {
-      const id = key.name.slice(5);
-      if (scopedIds && !scopedIds.includes(id)) continue;
-      const raw = await env.LINKS.get(key.name);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as LinkData | AliasData;
-      if (!isAlias(parsed)) primaries.push({ id, data: parsed });
+    // Get all primary links (optionally scoped)
+    let query = "SELECT id, url, created_at FROM links";
+    const binds: string[] = [];
+    if (scopedIds?.length) {
+      const placeholders = scopedIds.map(() => "?").join(",");
+      query += ` WHERE id IN (${placeholders})`;
+      binds.push(...scopedIds);
     }
+    const stmt = binds.length
+      ? env.DB.prepare(query).bind(...binds)
+      : env.DB.prepare(query);
+    const { results: primaries } = await stmt.all<{
+      id: string;
+      url: string;
+      created_at: number;
+    }>();
 
     // Group by URL
-    const byUrl = new Map<string, Array<{ id: string; data: LinkData }>>();
+    const byUrl = new Map<
+      string,
+      Array<{ id: string; url: string; created_at: number }>
+    >();
     for (const p of primaries) {
-      const group = byUrl.get(p.data.url) ?? [];
+      const group = byUrl.get(p.url) ?? [];
       group.push(p);
-      byUrl.set(p.data.url, group);
+      byUrl.set(p.url, group);
     }
 
     let merged = 0;
     for (const group of byUrl.values()) {
       if (group.length < 2) continue;
-      // Oldest entry becomes (or stays) the primary
-      group.sort((a, b) => a.data.createdAt - b.data.createdAt);
+      group.sort((a, b) => a.created_at - b.created_at);
       const primary = group[0];
-      const newAliases = [...(primary.data.aliases ?? [])];
 
       for (const dup of group.slice(1)) {
-        const dupAliases = dup.data.aliases ?? [];
-        // Convert the duplicate itself to an alias entry
-        await env.LINKS.put(
-          `link:${dup.id}`,
-          JSON.stringify({ aliasOf: primary.id } satisfies AliasData),
-        );
-        // Re-point any of the duplicate's own aliases to the new primary
-        for (const aliasId of dupAliases) {
-          await env.LINKS.put(
-            `link:${aliasId}`,
-            JSON.stringify({ aliasOf: primary.id } satisfies AliasData),
-          );
-        }
-        newAliases.push(dup.id, ...dupAliases);
+        // Re-point any aliases of the duplicate to the new primary
+        await env.DB.prepare(
+          "UPDATE aliases SET primary_id = ? WHERE primary_id = ?",
+        )
+          .bind(primary.id, dup.id)
+          .run();
+        // Convert the duplicate itself to an alias
+        await env.DB.prepare(
+          "INSERT INTO aliases (alias_id, primary_id) VALUES (?, ?) ON CONFLICT(alias_id) DO UPDATE SET primary_id = excluded.primary_id",
+        )
+          .bind(dup.id, primary.id)
+          .run();
+        // Delete the duplicate from links table
+        await env.DB.prepare("DELETE FROM links WHERE id = ?")
+          .bind(dup.id)
+          .run();
         merged++;
       }
-
-      const updatedPrimary: LinkData = { ...primary.data, aliases: newAliases };
-      await env.LINKS.put(`link:${primary.id}`, JSON.stringify(updatedPrimary));
     }
 
     return json({ merged });
@@ -338,22 +423,22 @@ async function handleAPI(
 
   // POST /api/password — change admin password
   if (pathname === "/api/password" && method === "POST") {
-    const raw = await env.LINKS.get("__admin__");
-    if (!raw) return json({ error: "Not configured" }, 400);
+    const row = await env.DB.prepare(
+      "SELECT hash, salt FROM admin WHERE id = 1",
+    ).first<{ hash: string; salt: string }>();
+    if (!row) return json({ error: "Not configured" }, 400);
     const { currentPassword, newPassword } = (await request.json()) as {
       currentPassword: string;
       newPassword: string;
     };
-    const { hash, salt } = JSON.parse(raw) as AdminData;
-    if (!(await verifyPassword(currentPassword, hash, salt)))
+    if (!(await verifyPassword(currentPassword, row.hash, row.salt)))
       return json({ error: "Current password is incorrect" }, 401);
     if (!newPassword || newPassword.length < 8)
       return json({ error: "New password must be at least 8 characters" }, 400);
     const { hash: newHash, salt: newSalt } = await hashPassword(newPassword);
-    await env.LINKS.put(
-      "__admin__",
-      JSON.stringify({ hash: newHash, salt: newSalt } satisfies AdminData),
-    );
+    await env.DB.prepare("UPDATE admin SET hash = ?, salt = ? WHERE id = 1")
+      .bind(newHash, newSalt)
+      .run();
     return json({ ok: true });
   }
 
@@ -366,24 +451,55 @@ async function handleAPI(
   if (pathname === "/api/config" && method === "PUT") {
     const body = (await request.json()) as Partial<GlobalConfig>;
     const updated = { ...(await getConfig(env)), ...body };
-    await env.LINKS.put("__config__", JSON.stringify(updated));
+    await env.DB.prepare(
+      `INSERT INTO config (id, default_interstitial, interstitial_title, interstitial_description, redirect_delay)
+       VALUES (1, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         default_interstitial = excluded.default_interstitial,
+         interstitial_title = excluded.interstitial_title,
+         interstitial_description = excluded.interstitial_description,
+         redirect_delay = excluded.redirect_delay`,
+    )
+      .bind(
+        updated.defaultInterstitial ? 1 : 0,
+        updated.interstitialTitle,
+        updated.interstitialDescription,
+        updated.redirectDelay,
+      )
+      .run();
     return json(updated);
   }
 
   // GET /api/links
   if (pathname === "/api/links" && method === "GET") {
-    const list = await env.LINKS.list({ prefix: "link:" });
-    const links = (
-      await Promise.all(
-        list.keys.map(async (key) => {
-          const raw = await env.LINKS.get(key.name);
-          if (!raw) return null;
-          const parsed = JSON.parse(raw) as LinkData | AliasData;
-          if (isAlias(parsed)) return null; // skip alias entries
-          return linkToResponse(key.name.slice(5), parsed);
-        }),
-      )
-    ).filter(Boolean);
+    const { results } = await env.DB.prepare("SELECT * FROM links").all<{
+      id: string;
+      url: string;
+      created_at: number;
+      title: string | null;
+      description: string | null;
+      interstitial: number | null;
+      redirect_delay: number | null;
+    }>();
+    const links = await Promise.all(
+      results.map(async (row) => {
+        const aliases = await getAliases(env, row.id);
+        const data: LinkData = {
+          url: row.url,
+          createdAt: row.created_at,
+          ...(row.title ? { title: row.title } : {}),
+          ...(row.description ? { description: row.description } : {}),
+          ...(row.interstitial !== null
+            ? { interstitial: row.interstitial === 1 }
+            : {}),
+          ...(row.redirect_delay !== null
+            ? { redirectDelay: row.redirect_delay }
+            : {}),
+          ...(aliases.length ? { aliases } : {}),
+        };
+        return linkToResponse(row.id, data);
+      }),
+    );
     return json(links);
   }
 
@@ -402,21 +518,31 @@ async function handleAPI(
         { error: "ID must be 1-50 chars: a-z, A-Z, 0-9, _ or -" },
         400,
       );
-    if (await env.LINKS.get(`link:${id}`))
+
+    // Check if ID exists as a link or alias
+    const existingLink = await env.DB.prepare(
+      "SELECT 1 FROM links WHERE id = ?",
+    )
+      .bind(id)
+      .first();
+    const existingAlias = await env.DB.prepare(
+      "SELECT 1 FROM aliases WHERE alias_id = ?",
+    )
+      .bind(id)
+      .first();
+    if (existingLink || existingAlias)
       return json({ error: "ID already exists" }, 409);
 
     // Auto-merge: if the URL already exists, create an alias instead
     const existing = await findLinkByUrl(env, body.url);
     if (existing) {
-      await env.LINKS.put(
-        `link:${id}`,
-        JSON.stringify({ aliasOf: existing.id } satisfies AliasData),
-      );
-      const updatedData: LinkData = {
-        ...existing.data,
-        aliases: [...(existing.data.aliases ?? []), id],
-      };
-      await env.LINKS.put(`link:${existing.id}`, JSON.stringify(updatedData));
+      await env.DB.prepare(
+        "INSERT INTO aliases (alias_id, primary_id) VALUES (?, ?)",
+      )
+        .bind(id, existing.id)
+        .run();
+      const updatedData = await getLink(env, existing.id);
+      if (!updatedData) return json({ error: "Internal error" }, 500);
       return json(
         {
           ...linkToResponse(existing.id, updatedData),
@@ -428,7 +554,7 @@ async function handleAPI(
     }
 
     const link = applyLinkPayload({}, body);
-    await env.LINKS.put(`link:${id}`, JSON.stringify(link));
+    await saveLink(env, id, link);
     return json({ id, ...link }, 201);
   }
 
@@ -442,11 +568,8 @@ async function handleAPI(
 
     // POST /api/links/:id/aliases — add a manual alias
     if (!aliasId && method === "POST") {
-      const primaryRaw = await env.LINKS.get(`link:${primaryId}`);
-      if (!primaryRaw) return json({ error: "Not found" }, 404);
-      const primary = JSON.parse(primaryRaw) as LinkData | AliasData;
-      if (isAlias(primary))
-        return json({ error: "Cannot add alias to an alias" }, 400);
+      const primary = await getLink(env, primaryId);
+      if (!primary) return json({ error: "Not found" }, 404);
       const { alias } = (await request.json()) as { alias: string };
       const cleanAlias = alias?.trim();
       if (!cleanAlias || !/^[a-zA-Z0-9_-]{1,50}$/.test(cleanAlias))
@@ -454,31 +577,38 @@ async function handleAPI(
           { error: "Alias ID must be 1-50 chars: a-z, A-Z, 0-9, _ or -" },
           400,
         );
-      if (await env.LINKS.get(`link:${cleanAlias}`))
+      // Check if ID exists
+      const existingLink = await env.DB.prepare(
+        "SELECT 1 FROM links WHERE id = ?",
+      )
+        .bind(cleanAlias)
+        .first();
+      const existingAlias = await env.DB.prepare(
+        "SELECT 1 FROM aliases WHERE alias_id = ?",
+      )
+        .bind(cleanAlias)
+        .first();
+      if (existingLink || existingAlias)
         return json({ error: "ID already exists" }, 409);
-      await env.LINKS.put(
-        `link:${cleanAlias}`,
-        JSON.stringify({ aliasOf: primaryId } satisfies AliasData),
-      );
-      const updated: LinkData = {
-        ...primary,
-        aliases: [...(primary.aliases ?? []), cleanAlias],
-      };
-      await env.LINKS.put(`link:${primaryId}`, JSON.stringify(updated));
+      await env.DB.prepare(
+        "INSERT INTO aliases (alias_id, primary_id) VALUES (?, ?)",
+      )
+        .bind(cleanAlias, primaryId)
+        .run();
+      const updated = await getLink(env, primaryId);
+      if (!updated) return json({ error: "Internal error" }, 500);
       return json(linkToResponse(primaryId, updated));
     }
 
     // DELETE /api/links/:id/aliases/:aliasId — remove an alias
     if (aliasId && method === "DELETE") {
-      const primaryRaw = await env.LINKS.get(`link:${primaryId}`);
-      if (!primaryRaw) return json({ error: "Not found" }, 404);
-      const primary = JSON.parse(primaryRaw) as LinkData;
-      await env.LINKS.delete(`link:${aliasId}`);
-      const updated: LinkData = {
-        ...primary,
-        aliases: (primary.aliases ?? []).filter((a) => a !== aliasId),
-      };
-      await env.LINKS.put(`link:${primaryId}`, JSON.stringify(updated));
+      const primary = await getLink(env, primaryId);
+      if (!primary) return json({ error: "Not found" }, 404);
+      await env.DB.prepare("DELETE FROM aliases WHERE alias_id = ?")
+        .bind(aliasId)
+        .run();
+      const updated = await getLink(env, primaryId);
+      if (!updated) return json({ error: "Internal error" }, 500);
       return json(linkToResponse(primaryId, updated));
     }
   }
@@ -505,42 +635,157 @@ async function handleAPI(
         return json({ error: "Invalid URL" }, 400);
       }
       const updated = applyLinkPayload(resolved.data, body);
-      if (resolved.data.aliases?.length)
-        updated.aliases = resolved.data.aliases;
-      await env.LINKS.put(`link:${resolved.id}`, JSON.stringify(updated));
-      return json(linkToResponse(resolved.id, updated));
+      await saveLink(env, resolved.id, updated);
+      const full = await getLink(env, resolved.id);
+      if (!full) return json({ error: "Internal error" }, 500);
+      return json(linkToResponse(resolved.id, full));
     }
 
     if (method === "DELETE") {
-      const raw = await env.LINKS.get(`link:${id}`);
-      if (raw) {
-        const parsed = JSON.parse(raw) as LinkData | AliasData;
-        if (isAlias(parsed)) {
-          // Remove this alias from the primary's list
-          const primaryRaw = await env.LINKS.get(`link:${parsed.aliasOf}`);
-          if (primaryRaw) {
-            const primary = JSON.parse(primaryRaw) as LinkData;
-            const updated: LinkData = {
-              ...primary,
-              aliases: (primary.aliases ?? []).filter((a) => a !== id),
-            };
-            await env.LINKS.put(
-              `link:${parsed.aliasOf}`,
-              JSON.stringify(updated),
-            );
-          }
-        } else {
-          // Delete all alias entries pointing to this primary
-          await Promise.all(
-            (parsed.aliases ?? []).map((alias) =>
-              env.LINKS.delete(`link:${alias}`),
-            ),
-          );
-        }
+      // Check if it's an alias
+      const alias = await env.DB.prepare(
+        "SELECT primary_id FROM aliases WHERE alias_id = ?",
+      )
+        .bind(id)
+        .first<{ primary_id: string }>();
+
+      if (alias) {
+        // Just remove the alias
+        await env.DB.prepare("DELETE FROM aliases WHERE alias_id = ?")
+          .bind(id)
+          .run();
+      } else {
+        // It's a primary link — delete all its aliases, then the link itself
+        await env.DB.prepare("DELETE FROM aliases WHERE primary_id = ?")
+          .bind(id)
+          .run();
+        await env.DB.prepare("DELETE FROM links WHERE id = ?").bind(id).run();
       }
-      await env.LINKS.delete(`link:${id}`);
       return json({ ok: true });
     }
+  }
+
+  // POST /api/migrate-kv — one-time migration from KV to D1
+  if (pathname === "/api/migrate-kv" && method === "POST") {
+    if (!env.LEGACY_KV)
+      return json(
+        {
+          error:
+            "LEGACY_KV binding not configured. Add it to wrangler.jsonc to migrate.",
+        },
+        400,
+      );
+
+    const stats = { links: 0, aliases: 0, admin: false, config: false };
+
+    // Migrate admin
+    const adminRaw = await env.LEGACY_KV.get("__admin__");
+    if (adminRaw) {
+      const { hash, salt } = JSON.parse(adminRaw) as {
+        hash: string;
+        salt: string;
+      };
+      await env.DB.prepare(
+        "INSERT INTO admin (id, hash, salt) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET hash = excluded.hash, salt = excluded.salt",
+      )
+        .bind(hash, salt)
+        .run();
+      stats.admin = true;
+    }
+
+    // Migrate config
+    const configRaw = await env.LEGACY_KV.get("__config__");
+    if (configRaw) {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        ...JSON.parse(configRaw),
+      } as GlobalConfig;
+      await env.DB.prepare(
+        `INSERT INTO config (id, default_interstitial, interstitial_title, interstitial_description, redirect_delay)
+         VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           default_interstitial = excluded.default_interstitial,
+           interstitial_title = excluded.interstitial_title,
+           interstitial_description = excluded.interstitial_description,
+           redirect_delay = excluded.redirect_delay`,
+      )
+        .bind(
+          cfg.defaultInterstitial ? 1 : 0,
+          cfg.interstitialTitle,
+          cfg.interstitialDescription,
+          cfg.redirectDelay,
+        )
+        .run();
+      stats.config = true;
+    }
+
+    // Migrate links and aliases
+    interface KvLinkData {
+      url: string;
+      createdAt: number;
+      title?: string;
+      description?: string;
+      interstitial?: boolean;
+      redirectDelay?: number;
+      aliases?: string[];
+    }
+    interface KvAliasData {
+      aliasOf: string;
+    }
+    function isKvAlias(d: unknown): d is KvAliasData {
+      return typeof d === "object" && d !== null && "aliasOf" in d;
+    }
+
+    const list = await env.LEGACY_KV.list({ prefix: "link:" });
+    // First pass: insert primary links
+    for (const key of list.keys) {
+      const raw = await env.LEGACY_KV.get(key.name);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as KvLinkData | KvAliasData;
+      if (isKvAlias(parsed)) continue;
+      const id = key.name.slice(5);
+      await env.DB.prepare(
+        `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           url = excluded.url,
+           title = excluded.title,
+           description = excluded.description,
+           interstitial = excluded.interstitial,
+           redirect_delay = excluded.redirect_delay`,
+      )
+        .bind(
+          id,
+          parsed.url,
+          parsed.createdAt,
+          parsed.title ?? null,
+          parsed.description ?? null,
+          parsed.interstitial !== undefined
+            ? parsed.interstitial
+              ? 1
+              : 0
+            : null,
+          parsed.redirectDelay ?? null,
+        )
+        .run();
+      stats.links++;
+    }
+    // Second pass: insert aliases
+    for (const key of list.keys) {
+      const raw = await env.LEGACY_KV.get(key.name);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as KvLinkData | KvAliasData;
+      if (!isKvAlias(parsed)) continue;
+      const aliasId = key.name.slice(5);
+      await env.DB.prepare(
+        "INSERT INTO aliases (alias_id, primary_id) VALUES (?, ?) ON CONFLICT(alias_id) DO UPDATE SET primary_id = excluded.primary_id",
+      )
+        .bind(aliasId, parsed.aliasOf)
+        .run();
+      stats.aliases++;
+    }
+
+    return json({ ok: true, migrated: stats });
   }
 
   return json({ error: "Not found" }, 404);
