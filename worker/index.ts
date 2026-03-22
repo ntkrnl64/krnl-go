@@ -287,8 +287,13 @@ async function handleAPI(
     const admin = await env.DB.prepare(
       "SELECT 1 FROM admin WHERE id = 1",
     ).first();
-    const setup = noTokenCheck || admin !== null;
-    return json({ setup, noTokenCheck });
+    // Also check legacy KV if D1 has no admin yet
+    const kvAdmin =
+      !admin && env.LEGACY_KV
+        ? (await env.LEGACY_KV.get("__admin__")) !== null
+        : false;
+    const setup = noTokenCheck || admin !== null || kvAdmin;
+    return json({ setup, noTokenCheck, kvPending: kvAdmin });
   }
 
   // POST /api/setup
@@ -309,13 +314,29 @@ async function handleAPI(
 
   // POST /api/auth
   if (pathname === "/api/auth" && method === "POST") {
-    const row = await env.DB.prepare(
+    let row = await env.DB.prepare(
       "SELECT hash, salt FROM admin WHERE id = 1",
     ).first<{ hash: string; salt: string }>();
+    // Fall back to legacy KV credentials if D1 has no admin yet
+    if (!row && env.LEGACY_KV) {
+      const kvRaw = await env.LEGACY_KV.get("__admin__");
+      if (kvRaw) row = JSON.parse(kvRaw) as { hash: string; salt: string };
+    }
     if (!row) return json({ error: "Not configured" }, 400);
     const { password } = (await request.json()) as { password: string };
     if (!(await verifyPassword(password, row.hash, row.salt)))
       return json({ error: "Invalid password" }, 401);
+    // Auto-migrate admin credentials to D1 if they came from KV
+    const d1Admin = await env.DB.prepare(
+      "SELECT 1 FROM admin WHERE id = 1",
+    ).first();
+    if (!d1Admin) {
+      await env.DB.prepare(
+        "INSERT INTO admin (id, hash, salt) VALUES (1, ?, ?)",
+      )
+        .bind(row.hash, row.salt)
+        .run();
+    }
     const token = generateToken();
     await env.DB.prepare(
       "INSERT INTO sessions (token, expires_at) VALUES (?, ?)",
