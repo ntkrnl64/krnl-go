@@ -70,6 +70,7 @@ export interface ShortLink {
   description?: string;
   interstitial?: boolean;
   redirectDelay?: number;
+  proxy?: boolean;
   aliases?: string[];
 }
 
@@ -85,17 +86,22 @@ export interface GlobalConfig {
   interstitialTitle: string;
   interstitialDescription: string;
   redirectDelay: number;
+  defaultProxy: boolean;
 }
 
-export type InterstitialMode = "default" | "always" | "never";
+export type TriStateMode = "default" | "always" | "never";
+
+/** @deprecated Use TriStateMode instead */
+export type InterstitialMode = TriStateMode;
 
 export interface LinkPayload {
   id?: string;
   url: string;
   title?: string;
   description?: string;
-  interstitial?: InterstitialMode;
+  interstitial?: TriStateMode;
   redirectDelay?: number | null;
+  proxy?: TriStateMode;
 }
 
 export interface CreateLinkResult extends ShortLink {

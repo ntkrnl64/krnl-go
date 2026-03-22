@@ -20,7 +20,7 @@ import {
 } from "@fluentui/react-components";
 import { AddRegular, DismissRegular } from "@fluentui/react-icons";
 import {
-  type InterstitialMode,
+  type TriStateMode,
   type ShortLink,
   addAlias,
   removeAlias,
@@ -28,10 +28,16 @@ import {
 } from "../../api";
 import LinkSlug from "../../components/LinkSlug";
 
-const INTERSTITIAL_LABELS: Record<InterstitialMode, string> = {
+const INTERSTITIAL_LABELS: Record<TriStateMode, string> = {
   default: "Default (use global setting)",
   always: "Always show",
   never: "Never show",
+};
+
+const PROXY_LABELS: Record<TriStateMode, string> = {
+  default: "Default (use global setting)",
+  always: "Always proxy",
+  never: "Never proxy",
 };
 
 const useStyles = makeStyles({
@@ -65,7 +71,7 @@ const useStyles = makeStyles({
   },
 });
 
-function toMode(v: boolean | undefined): InterstitialMode {
+function toMode(v: boolean | undefined): TriStateMode {
   if (v === true) return "always";
   if (v === false) return "never";
   return "default";
@@ -82,7 +88,8 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [interstitial, setInterstitial] = useState<InterstitialMode>("default");
+  const [interstitial, setInterstitial] = useState<TriStateMode>("default");
+  const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
   const [aliases, setAliases] = useState<string[]>([]);
   const [newAlias, setNewAlias] = useState("");
@@ -97,6 +104,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
       setTitle(link.title ?? "");
       setDescription(link.description ?? "");
       setInterstitial(toMode(link.interstitial));
+      setProxy(toMode(link.proxy));
       setRedirectDelay(
         link.redirectDelay !== undefined ? String(link.redirectDelay) : "",
       );
@@ -123,6 +131,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         interstitial,
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
+        proxy,
       });
       onUpdated(updated);
       onClose();
@@ -207,12 +216,28 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
                   rows={2}
                 />
               </Field>
+              <Field
+                label="Reverse proxy"
+                hint="Serve destination content directly instead of redirecting"
+              >
+                <Dropdown
+                  value={PROXY_LABELS[proxy]}
+                  selectedOptions={[proxy]}
+                  onOptionSelect={(_, d) =>
+                    setProxy(d.optionValue as TriStateMode)
+                  }
+                >
+                  <Option value="default">Default (use global setting)</Option>
+                  <Option value="always">Always proxy</Option>
+                  <Option value="never">Never proxy</Option>
+                </Dropdown>
+              </Field>
               <Field label="Interstitial page">
                 <Dropdown
                   value={INTERSTITIAL_LABELS[interstitial]}
                   selectedOptions={[interstitial]}
                   onOptionSelect={(_, d) =>
-                    setInterstitial(d.optionValue as InterstitialMode)
+                    setInterstitial(d.optionValue as TriStateMode)
                   }
                 >
                   <Option value="default">Default (use global setting)</Option>

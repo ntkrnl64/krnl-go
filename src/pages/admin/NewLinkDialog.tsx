@@ -18,14 +18,20 @@ import {
 } from "@fluentui/react-components";
 import {
   type CreateLinkResult,
-  type InterstitialMode,
+  type TriStateMode,
   createLink,
 } from "../../api";
 
-const INTERSTITIAL_LABELS: Record<InterstitialMode, string> = {
+const INTERSTITIAL_LABELS: Record<TriStateMode, string> = {
   default: "Default (use global setting)",
   always: "Always show",
   never: "Never show",
+};
+
+const PROXY_LABELS: Record<TriStateMode, string> = {
+  default: "Default (use global setting)",
+  always: "Always proxy",
+  never: "Never proxy",
 };
 
 const useStyles = makeStyles({
@@ -53,7 +59,8 @@ export default function NewLinkDialog({
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [interstitial, setInterstitial] = useState<InterstitialMode>("default");
+  const [interstitial, setInterstitial] = useState<TriStateMode>("default");
+  const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
   const [idError, setIdError] = useState("");
   const [urlError, setUrlError] = useState("");
@@ -65,6 +72,7 @@ export default function NewLinkDialog({
     setTitle("");
     setDescription("");
     setInterstitial("default");
+    setProxy("default");
     setRedirectDelay("");
     setIdError("");
     setUrlError("");
@@ -85,6 +93,7 @@ export default function NewLinkDialog({
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
         interstitial,
+        proxy,
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
       });
@@ -161,12 +170,28 @@ export default function NewLinkDialog({
                   rows={2}
                 />
               </Field>
+              <Field
+                label="Reverse proxy"
+                hint="Serve destination content directly instead of redirecting"
+              >
+                <Dropdown
+                  value={PROXY_LABELS[proxy]}
+                  selectedOptions={[proxy]}
+                  onOptionSelect={(_, d) =>
+                    setProxy(d.optionValue as TriStateMode)
+                  }
+                >
+                  <Option value="default">Default (use global setting)</Option>
+                  <Option value="always">Always proxy</Option>
+                  <Option value="never">Never proxy</Option>
+                </Dropdown>
+              </Field>
               <Field label="Interstitial page">
                 <Dropdown
                   value={INTERSTITIAL_LABELS[interstitial]}
                   selectedOptions={[interstitial]}
                   onOptionSelect={(_, d) =>
-                    setInterstitial(d.optionValue as InterstitialMode)
+                    setInterstitial(d.optionValue as TriStateMode)
                   }
                 >
                   <Option value="default">Default (use global setting)</Option>

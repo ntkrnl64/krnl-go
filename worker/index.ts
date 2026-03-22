@@ -7,6 +7,7 @@ interface LinkData {
   description?: string;
   interstitial?: boolean; // undefined = use global default
   redirectDelay?: number; // seconds; undefined = use global default, 0 = disabled
+  proxy?: boolean; // undefined = use global default
   aliases?: string[]; // other IDs that redirect here
 }
 
@@ -15,6 +16,7 @@ interface GlobalConfig {
   interstitialTitle: string;
   interstitialDescription: string;
   redirectDelay: number; // seconds; 0 = no auto-redirect
+  defaultProxy: boolean;
 }
 
 const DEFAULT_CONFIG: GlobalConfig = {
@@ -22,6 +24,7 @@ const DEFAULT_CONFIG: GlobalConfig = {
   interstitialTitle: "You are being redirected",
   interstitialDescription: "You are about to visit an external website.",
   redirectDelay: 0,
+  defaultProxy: false,
 };
 
 function toBase64(bytes: Uint8Array): string {
@@ -112,6 +115,7 @@ async function getConfig(env: Env): Promise<GlobalConfig> {
     interstitial_title: string;
     interstitial_description: string;
     redirect_delay: number;
+    default_proxy: number;
   }>();
   if (!row) return DEFAULT_CONFIG;
   return {
@@ -119,6 +123,7 @@ async function getConfig(env: Env): Promise<GlobalConfig> {
     interstitialTitle: row.interstitial_title,
     interstitialDescription: row.interstitial_description,
     redirectDelay: row.redirect_delay,
+    defaultProxy: row.default_proxy === 1,
   };
 }
 
@@ -144,6 +149,7 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
       description: string | null;
       interstitial: number | null;
       redirect_delay: number | null;
+      proxy: number | null;
     }>();
   if (!row) return null;
   const aliases = await getAliases(env, id);
@@ -158,6 +164,7 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
     ...(row.redirect_delay !== null
       ? { redirectDelay: row.redirect_delay }
       : {}),
+    ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
     ...(aliases.length ? { aliases } : {}),
   };
 }
@@ -194,15 +201,16 @@ async function findLinkByUrl(
   return { id: row.id, data };
 }
 
-type InterstitialMode = "default" | "always" | "never";
+type TriStateMode = "default" | "always" | "never";
 
 interface LinkPayload {
   id?: string;
   url: string;
   title?: string;
   description?: string;
-  interstitial?: InterstitialMode;
+  interstitial?: TriStateMode;
   redirectDelay?: number | null;
+  proxy?: TriStateMode;
 }
 
 function applyLinkPayload(
@@ -220,20 +228,23 @@ function applyLinkPayload(
   if (typeof body.redirectDelay === "number") {
     base.redirectDelay = Math.max(0, body.redirectDelay);
   }
+  if (body.proxy === "always") base.proxy = true;
+  else if (body.proxy === "never") base.proxy = false;
   return base;
 }
 
 /** Upserts a LinkData into the links table. */
 async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        url = excluded.url,
        title = excluded.title,
        description = excluded.description,
        interstitial = excluded.interstitial,
-       redirect_delay = excluded.redirect_delay`,
+       redirect_delay = excluded.redirect_delay,
+       proxy = excluded.proxy`,
   )
     .bind(
       id,
@@ -243,6 +254,7 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
       data.description ?? null,
       data.interstitial !== undefined ? (data.interstitial ? 1 : 0) : null,
       data.redirectDelay ?? null,
+      data.proxy !== undefined ? (data.proxy ? 1 : 0) : null,
     )
     .run();
 }
@@ -255,6 +267,7 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     description,
     interstitial,
     redirectDelay,
+    proxy,
     aliases,
   } = data;
   return {
@@ -265,6 +278,7 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     ...(description ? { description } : {}),
     ...(interstitial !== undefined ? { interstitial } : {}),
     ...(redirectDelay !== undefined ? { redirectDelay } : {}),
+    ...(proxy !== undefined ? { proxy } : {}),
     ...(aliases?.length ? { aliases } : {}),
   };
 }
@@ -473,19 +487,21 @@ async function handleAPI(
     const body = (await request.json()) as Partial<GlobalConfig>;
     const updated = { ...(await getConfig(env)), ...body };
     await env.DB.prepare(
-      `INSERT INTO config (id, default_interstitial, interstitial_title, interstitial_description, redirect_delay)
-       VALUES (1, ?, ?, ?, ?)
+      `INSERT INTO config (id, default_interstitial, interstitial_title, interstitial_description, redirect_delay, default_proxy)
+       VALUES (1, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          default_interstitial = excluded.default_interstitial,
          interstitial_title = excluded.interstitial_title,
          interstitial_description = excluded.interstitial_description,
-         redirect_delay = excluded.redirect_delay`,
+         redirect_delay = excluded.redirect_delay,
+         default_proxy = excluded.default_proxy`,
     )
       .bind(
         updated.defaultInterstitial ? 1 : 0,
         updated.interstitialTitle,
         updated.interstitialDescription,
         updated.redirectDelay,
+        updated.defaultProxy ? 1 : 0,
       )
       .run();
     return json(updated);
@@ -501,6 +517,7 @@ async function handleAPI(
       description: string | null;
       interstitial: number | null;
       redirect_delay: number | null;
+      proxy: number | null;
     }>();
     const links = await Promise.all(
       results.map(async (row) => {
@@ -516,6 +533,7 @@ async function handleAPI(
           ...(row.redirect_delay !== null
             ? { redirectDelay: row.redirect_delay }
             : {}),
+          ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
           ...(aliases.length ? { aliases } : {}),
         };
         return linkToResponse(row.id, data);
@@ -812,6 +830,49 @@ async function handleAPI(
   return json({ error: "Not found" }, 404);
 }
 
+async function handleProxy(
+  targetUrl: string,
+  originalRequest: Request,
+): Promise<Response> {
+  const url = new URL(targetUrl);
+  const headers = new Headers();
+  for (const h of [
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "cache-control",
+    "if-none-match",
+    "if-modified-since",
+    "range",
+    "user-agent",
+  ]) {
+    const val = originalRequest.headers.get(h);
+    if (val) headers.set(h, val);
+  }
+  headers.set("host", url.host);
+
+  try {
+    const upstream = await fetch(
+      new Request(url.toString(), {
+        method: "GET",
+        headers,
+        redirect: "follow",
+      }),
+    );
+    const respHeaders = new Headers(upstream.headers);
+    for (const h of ["transfer-encoding", "connection", "keep-alive"]) {
+      respHeaders.delete(h);
+    }
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: respHeaders,
+    });
+  } catch {
+    return Response.redirect(targetUrl, 302);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -824,6 +885,10 @@ export default {
       const resolved = await resolveToLink(env, id);
       if (resolved) {
         const config = await getConfig(env);
+        const useProxy = resolved.data.proxy ?? config.defaultProxy;
+        if (useProxy) {
+          return handleProxy(resolved.data.url, request);
+        }
         const showInterstitial =
           resolved.data.interstitial ?? config.defaultInterstitial;
         if (!showInterstitial) {

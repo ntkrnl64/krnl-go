@@ -49,6 +49,7 @@ export default function SettingsDialog({ open, onOpenChange }: Props) {
     interstitialTitle: "You are being redirected",
     interstitialDescription: "You are about to visit an external website.",
     redirectDelay: 0,
+    defaultProxy: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -80,6 +81,20 @@ export default function SettingsDialog({ open, onOpenChange }: Props) {
           <DialogTitle>Settings</DialogTitle>
           <DialogContent>
             <div className={styles.form}>
+              <div className={styles.switchRow}>
+                <span className={styles.switchLabel}>Reverse proxy</span>
+                <Switch
+                  label={
+                    config.defaultProxy
+                      ? "Enabled by default"
+                      : "Disabled by default"
+                  }
+                  checked={config.defaultProxy}
+                  onChange={(_, d) =>
+                    setConfig((c) => ({ ...c, defaultProxy: d.checked }))
+                  }
+                />
+              </div>
               <div className={styles.switchRow}>
                 <span className={styles.switchLabel}>Interstitial page</span>
                 <Switch
