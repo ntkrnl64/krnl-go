@@ -20,6 +20,7 @@ import {
 } from "@fluentui/react-components";
 import { AddRegular, DismissRegular } from "@fluentui/react-icons";
 import {
+  type MultiDestination,
   type TriStateMode,
   type ShortLink,
   addAlias,
@@ -27,6 +28,7 @@ import {
   updateLink,
 } from "../../api";
 import LinkSlug from "../../components/LinkSlug";
+import DestinationsEditor from "./DestinationsEditor";
 
 const INTERSTITIAL_LABELS: Record<TriStateMode, string> = {
   default: "Default (use global setting)",
@@ -92,6 +94,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
   const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
   const [aliases, setAliases] = useState<string[]>([]);
+  const [destinations, setDestinations] = useState<MultiDestination[]>([]);
   const [newAlias, setNewAlias] = useState("");
   const [error, setError] = useState("");
   const [aliasError, setAliasError] = useState("");
@@ -109,6 +112,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         link.redirectDelay !== undefined ? String(link.redirectDelay) : "",
       );
       setAliases(link.aliases ?? []);
+      setDestinations(link.destinations ?? []);
       setError("");
       setAliasError("");
       setNewAlias("");
@@ -124,6 +128,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
     }
     setLoading(true);
     try {
+      const validDests = destinations.filter((d) => d.url && d.title);
       const updated = await updateLink(link.id, {
         url,
         ...(title ? { title } : {}),
@@ -132,6 +137,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
         proxy,
+        ...(link.multi ? { multi: true, destinations: validDests } : {}),
       });
       onUpdated(updated);
       onClose();
@@ -174,14 +180,18 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
 
   return (
     <Dialog open={link !== null} onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface>
+      <DialogSurface style={link?.multi ? { maxWidth: "560px" } : undefined}>
         <DialogBody>
           <DialogTitle>
             <span className={styles.titleRow}>
               Edit {link && <LinkSlug id={link.id} size="md" />}
             </span>
           </DialogTitle>
-          <DialogContent>
+          <DialogContent
+            style={
+              link?.multi ? { maxHeight: "60vh", overflowY: "auto" } : undefined
+            }
+          >
             <div className={styles.form}>
               <Field
                 label="Destination URL"
@@ -257,6 +267,14 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
                   style={{ maxWidth: "120px" }}
                 />
               </Field>
+              {link?.multi && (
+                <Field label="Destinations">
+                  <DestinationsEditor
+                    destinations={destinations}
+                    onChange={setDestinations}
+                  />
+                </Field>
+              )}
               <Field
                 label="Aliases"
                 hint="Alternative short IDs that redirect to the same destination"

@@ -4,6 +4,7 @@ import {
   DatabaseRegular,
   DeleteRegular,
   DismissRegular,
+  GridRegular,
   LinkRegular,
   LockClosedRegular,
   MergeRegular,
@@ -35,6 +36,7 @@ import EditLinkDialog from "./admin/EditLinkDialog";
 import LinksTable from "./admin/LinksTable";
 import NewLinkDialog from "./admin/NewLinkDialog";
 import MigrateKVDialog from "./admin/MigrateKVDialog";
+import NewMultiLinkDialog from "./admin/NewMultiLinkDialog";
 import SettingsDialog from "./admin/SettingsDialog";
 
 const useStyles = makeStyles({
@@ -148,6 +150,7 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
+  const [newMultiOpen, setNewMultiOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [migrateOpen, setMigrateOpen] = useState(false);
@@ -236,6 +239,7 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
   }
 
   const interstitialCount = links.filter((l) => l.interstitial === true).length;
+  const multiCount = links.filter((l) => l.multi).length;
   const origin = window.location.origin;
 
   return (
@@ -249,6 +253,13 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
             onClick={() => setNewOpen(true)}
           >
             New link
+          </Button>
+          <Button
+            appearance="primary"
+            icon={<GridRegular />}
+            onClick={() => setNewMultiOpen(true)}
+          >
+            Multi-select
           </Button>
           <Button
             appearance="subtle"
@@ -302,6 +313,15 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
             </Text>
             <Caption1 style={{ color: tokens.colorNeutralForeground3 }}>
               with interstitial
+            </Caption1>
+          </div>
+          <div className={styles.statDivider} />
+          <div className={styles.stat}>
+            <Text size={600} weight="semibold">
+              {multiCount}
+            </Text>
+            <Caption1 style={{ color: tokens.colorNeutralForeground3 }}>
+              multi-select
             </Caption1>
           </div>
         </div>
@@ -417,6 +437,11 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
       <NewLinkDialog
         open={newOpen}
         onOpenChange={setNewOpen}
+        onCreated={handleCreated}
+      />
+      <NewMultiLinkDialog
+        open={newMultiOpen}
+        onOpenChange={setNewMultiOpen}
         onCreated={handleCreated}
       />
       <EditLinkDialog

@@ -1,5 +1,16 @@
 /// <reference path="../worker-configuration.d.ts" />
 
+interface MultiDestination {
+  id?: number;
+  url: string;
+  title: string;
+  groupName?: string;
+  groupTitle?: string;
+  groupDescription?: string;
+  autoRedirectChance: number; // 0–100
+  position: number;
+}
+
 interface LinkData {
   url: string;
   createdAt: number;
@@ -9,6 +20,8 @@ interface LinkData {
   redirectDelay?: number; // seconds; undefined = use global default, 0 = disabled
   proxy?: boolean; // undefined = use global default
   aliases?: string[]; // other IDs that redirect here
+  multi?: boolean;
+  destinations?: MultiDestination[];
 }
 
 interface GlobalConfig {
@@ -127,6 +140,67 @@ async function getConfig(env: Env): Promise<GlobalConfig> {
   };
 }
 
+/** Loads multi-destinations for a link. */
+async function getMultiDestinations(
+  env: Env,
+  linkId: string,
+): Promise<MultiDestination[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM multi_destinations WHERE link_id = ? ORDER BY position",
+  )
+    .bind(linkId)
+    .all<{
+      id: number;
+      link_id: string;
+      url: string;
+      title: string;
+      group_name: string | null;
+      group_title: string | null;
+      group_description: string | null;
+      auto_redirect_chance: number;
+      position: number;
+    }>();
+  return results.map((r) => ({
+    id: r.id,
+    url: r.url,
+    title: r.title,
+    ...(r.group_name ? { groupName: r.group_name } : {}),
+    ...(r.group_title ? { groupTitle: r.group_title } : {}),
+    ...(r.group_description ? { groupDescription: r.group_description } : {}),
+    autoRedirectChance: r.auto_redirect_chance,
+    position: r.position,
+  }));
+}
+
+/** Saves multi-destinations for a link (replace all). */
+async function saveMultiDestinations(
+  env: Env,
+  linkId: string,
+  destinations: MultiDestination[],
+): Promise<void> {
+  await env.DB.prepare("DELETE FROM multi_destinations WHERE link_id = ?")
+    .bind(linkId)
+    .run();
+  for (let i = 0; i < destinations.length; i++) {
+    const d = destinations[i];
+    await env.DB.prepare(
+      `INSERT INTO multi_destinations (link_id, url, title, group_name, group_title, group_description, auto_redirect_chance, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        linkId,
+        d.url,
+        d.title,
+        d.groupName ?? null,
+        d.groupTitle ?? null,
+        d.groupDescription ?? null,
+        d.autoRedirectChance,
+        d.position ?? i,
+      )
+      .run();
+  }
+}
+
 /** Loads aliases for a primary link. */
 async function getAliases(env: Env, primaryId: string): Promise<string[]> {
   const { results } = await env.DB.prepare(
@@ -137,7 +211,7 @@ async function getAliases(env: Env, primaryId: string): Promise<string[]> {
   return results.map((r) => r.alias_id);
 }
 
-/** Loads a LinkData object from the links table + its aliases. */
+/** Loads a LinkData object from the links table + its aliases + multi-destinations. */
 async function getLink(env: Env, id: string): Promise<LinkData | null> {
   const row = await env.DB.prepare("SELECT * FROM links WHERE id = ?")
     .bind(id)
@@ -150,9 +224,12 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
       interstitial: number | null;
       redirect_delay: number | null;
       proxy: number | null;
+      multi: number | null;
     }>();
   if (!row) return null;
   const aliases = await getAliases(env, id);
+  const isMulti = row.multi === 1;
+  const destinations = isMulti ? await getMultiDestinations(env, id) : [];
   return {
     url: row.url,
     createdAt: row.created_at,
@@ -166,6 +243,7 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
       : {}),
     ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
     ...(aliases.length ? { aliases } : {}),
+    ...(isMulti ? { multi: true, destinations } : {}),
   };
 }
 
@@ -211,6 +289,8 @@ interface LinkPayload {
   interstitial?: TriStateMode;
   redirectDelay?: number | null;
   proxy?: TriStateMode;
+  multi?: boolean;
+  destinations?: MultiDestination[];
 }
 
 function applyLinkPayload(
@@ -230,21 +310,26 @@ function applyLinkPayload(
   }
   if (body.proxy === "always") base.proxy = true;
   else if (body.proxy === "never") base.proxy = false;
+  if (body.multi) {
+    base.multi = true;
+    base.destinations = body.destinations ?? [];
+  }
   return base;
 }
 
-/** Upserts a LinkData into the links table. */
+/** Upserts a LinkData into the links table + multi-destinations. */
 async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy, multi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        url = excluded.url,
        title = excluded.title,
        description = excluded.description,
        interstitial = excluded.interstitial,
        redirect_delay = excluded.redirect_delay,
-       proxy = excluded.proxy`,
+       proxy = excluded.proxy,
+       multi = excluded.multi`,
   )
     .bind(
       id,
@@ -255,8 +340,12 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
       data.interstitial !== undefined ? (data.interstitial ? 1 : 0) : null,
       data.redirectDelay ?? null,
       data.proxy !== undefined ? (data.proxy ? 1 : 0) : null,
+      data.multi ? 1 : null,
     )
     .run();
+  if (data.multi && data.destinations) {
+    await saveMultiDestinations(env, id, data.destinations);
+  }
 }
 
 function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
@@ -269,6 +358,8 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     redirectDelay,
     proxy,
     aliases,
+    multi,
+    destinations,
   } = data;
   return {
     id,
@@ -280,6 +371,7 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     ...(redirectDelay !== undefined ? { redirectDelay } : {}),
     ...(proxy !== undefined ? { proxy } : {}),
     ...(aliases?.length ? { aliases } : {}),
+    ...(multi ? { multi: true, destinations: destinations ?? [] } : {}),
   };
 }
 
@@ -370,12 +462,21 @@ async function handleAPI(
     return json({ ok: true });
   }
 
-  // GET /api/resolve/:id  (public — used by the interstitial SPA page)
+  // GET /api/resolve/:id  (public — used by the interstitial / multi-select SPA page)
   const resolveMatch = pathname.match(/^\/api\/resolve\/([a-zA-Z0-9_-]+)$/);
   if (resolveMatch && method === "GET") {
     const resolved = await resolveToLink(env, resolveMatch[1]);
     if (!resolved) return json({ error: "Not found" }, 404);
     const config = await getConfig(env);
+    if (resolved.data.multi && resolved.data.destinations?.length) {
+      return json({
+        multi: true,
+        title: resolved.data.title ?? config.interstitialTitle,
+        description:
+          resolved.data.description ?? config.interstitialDescription,
+        destinations: resolved.data.destinations,
+      });
+    }
     return json({
       url: resolved.data.url,
       title: resolved.data.title ?? config.interstitialTitle,
@@ -518,10 +619,15 @@ async function handleAPI(
       interstitial: number | null;
       redirect_delay: number | null;
       proxy: number | null;
+      multi: number | null;
     }>();
     const links = await Promise.all(
       results.map(async (row) => {
         const aliases = await getAliases(env, row.id);
+        const isMulti = row.multi === 1;
+        const destinations = isMulti
+          ? await getMultiDestinations(env, row.id)
+          : [];
         const data: LinkData = {
           url: row.url,
           createdAt: row.created_at,
@@ -535,6 +641,7 @@ async function handleAPI(
             : {}),
           ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
           ...(aliases.length ? { aliases } : {}),
+          ...(isMulti ? { multi: true, destinations } : {}),
         };
         return linkToResponse(row.id, data);
       }),
@@ -884,6 +991,10 @@ export default {
       const id = pathname.slice(1);
       const resolved = await resolveToLink(env, id);
       if (resolved) {
+        // Multi-select links always serve the SPA selection page
+        if (resolved.data.multi) {
+          return serveIndex(request, env);
+        }
         const config = await getConfig(env);
         const useProxy = resolved.data.proxy ?? config.defaultProxy;
         if (useProxy) {

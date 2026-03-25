@@ -229,7 +229,11 @@ export default function LinksTable({
             </TableCell>
             <TableCell>
               <TableCellLayout>
-                {link.interstitial === true ? (
+                {link.multi ? (
+                  <Badge color="important" appearance="tint">
+                    Multi ({link.destinations?.length ?? 0})
+                  </Badge>
+                ) : link.interstitial === true ? (
                   <Badge color="brand" appearance="tint">
                     Always
                   </Badge>

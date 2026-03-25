@@ -8,6 +8,7 @@ import {
 } from "@fluentui/react-components";
 import {
   type ResolvedLink,
+  type ResolvedMultiLink,
   checkStatus,
   clearToken,
   getToken,
@@ -18,6 +19,7 @@ import LoginCard from "./components/LoginCard";
 import AdminPage from "./pages/AdminPage";
 import CreateLinkPage from "./pages/CreateLinkPage";
 import InterstitialPage from "./pages/InterstitialPage";
+import MultiSelectPage from "./pages/MultiSelectPage";
 import SetupPage from "./pages/SetupPage";
 
 type AppState =
@@ -25,7 +27,8 @@ type AppState =
   | "needs-setup"
   | "needs-login"
   | "ready"
-  | "interstitial";
+  | "interstitial"
+  | "multi-select";
 
 const shortId =
   window.location.pathname === "/" ? null : window.location.pathname.slice(1);
@@ -47,6 +50,9 @@ export default function App() {
   const styles = useStyles();
   const [state, setState] = useState<AppState>("loading");
   const [resolved, setResolved] = useState<ResolvedLink | null>(null);
+  const [resolvedMulti, setResolvedMulti] = useState<ResolvedMultiLink | null>(
+    null,
+  );
   const [noTokenCheck, setNoTokenCheck] = useState(false);
 
   useEffect(() => {
@@ -55,8 +61,13 @@ export default function App() {
         try {
           const link = await resolveLink(shortId);
           if (link) {
-            setResolved(link);
-            setState("interstitial");
+            if ("multi" in link && link.multi) {
+              setResolvedMulti(link);
+              setState("multi-select");
+            } else {
+              setResolved(link as ResolvedLink);
+              setState("interstitial");
+            }
             return;
           }
         } catch {
@@ -103,6 +114,9 @@ export default function App() {
         )}
         {state === "interstitial" && resolved && (
           <InterstitialPage link={resolved} />
+        )}
+        {state === "multi-select" && resolvedMulti && (
+          <MultiSelectPage link={resolvedMulti} />
         )}
         {state === "needs-setup" && (
           <SetupPage onComplete={() => setState("needs-login")} />

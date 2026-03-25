@@ -62,6 +62,17 @@ export async function changePassword(
   if (!res.ok) throw new Error(((await res.json()) as { error: string }).error);
 }
 
+export interface MultiDestination {
+  id?: number;
+  url: string;
+  title: string;
+  groupName?: string;
+  groupTitle?: string;
+  groupDescription?: string;
+  autoRedirectChance: number;
+  position: number;
+}
+
 export interface ShortLink {
   id: string;
   url: string;
@@ -72,6 +83,8 @@ export interface ShortLink {
   redirectDelay?: number;
   proxy?: boolean;
   aliases?: string[];
+  multi?: boolean;
+  destinations?: MultiDestination[];
 }
 
 export interface ResolvedLink {
@@ -79,6 +92,13 @@ export interface ResolvedLink {
   title: string;
   description: string;
   redirectDelay: number;
+}
+
+export interface ResolvedMultiLink {
+  multi: true;
+  title: string;
+  description: string;
+  destinations: MultiDestination[];
 }
 
 export interface GlobalConfig {
@@ -102,6 +122,8 @@ export interface LinkPayload {
   interstitial?: TriStateMode;
   redirectDelay?: number | null;
   proxy?: TriStateMode;
+  multi?: boolean;
+  destinations?: MultiDestination[];
 }
 
 export interface CreateLinkResult extends ShortLink {
@@ -175,10 +197,12 @@ export async function removeAlias(
   return data;
 }
 
-export async function resolveLink(id: string): Promise<ResolvedLink | null> {
+export async function resolveLink(
+  id: string,
+): Promise<ResolvedLink | ResolvedMultiLink | null> {
   const res = await fetch(`/api/resolve/${id}`);
   if (res.status === 404) return null;
-  return res.json() as Promise<ResolvedLink>;
+  return res.json() as Promise<ResolvedLink | ResolvedMultiLink>;
 }
 
 export async function mergeLinks(ids?: string[]): Promise<{ merged: number }> {
