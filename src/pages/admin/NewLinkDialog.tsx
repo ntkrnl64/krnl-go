@@ -12,15 +12,18 @@ import {
   Field,
   Input,
   Option,
+  Switch,
   Textarea,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
 import {
   type CreateLinkResult,
+  type MultiDestination,
   type TriStateMode,
   createLink,
 } from "../../api";
+import DestinationsEditor from "./DestinationsEditor";
 
 const INTERSTITIAL_LABELS: Record<TriStateMode, string> = {
   default: "Default (use global setting)",
@@ -66,8 +69,13 @@ export default function NewLinkDialog({
   const [redirectDelay, setRedirectDelay] = useState("");
   const [customJsFrontend, setCustomJsFrontend] = useState("");
   const [customJsBackend, setCustomJsBackend] = useState("");
+  const [multi, setMulti] = useState(false);
+  const [destinations, setDestinations] = useState<MultiDestination[]>([
+    { url: "", title: "", autoRedirectChance: 0, position: 0 },
+    { url: "", title: "", autoRedirectChance: 0, position: 1 },
+  ]);
   const [idError, setIdError] = useState("");
-  const [urlError, setUrlError] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   function reset() {
@@ -80,22 +88,33 @@ export default function NewLinkDialog({
     setRedirectDelay("");
     setCustomJsFrontend("");
     setCustomJsBackend("");
+    setMulti(false);
+    setDestinations([
+      { url: "", title: "", autoRedirectChance: 0, position: 0 },
+      { url: "", title: "", autoRedirectChance: 0, position: 1 },
+    ]);
     setIdError("");
-    setUrlError("");
+    setError("");
   }
+
+  const validDests = destinations.filter((d) => d.url && d.title);
 
   async function handleCreate() {
     setIdError("");
-    setUrlError("");
-    if (!url) {
-      setUrlError("URL is required");
+    setError("");
+    if (multi && validDests.length < 1) {
+      setError("At least one destination with URL and title is required");
+      return;
+    }
+    if (!multi && !url) {
+      setError("URL is required");
       return;
     }
     setLoading(true);
     try {
       const link = await createLink({
         id: id || undefined,
-        url,
+        url: multi ? validDests[0].url : url,
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
         interstitial,
@@ -104,6 +123,8 @@ export default function NewLinkDialog({
         customJsBackend: customJsBackend || null,
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
+        multi,
+        ...(multi ? { destinations: validDests } : {}),
       });
       onCreated(link);
       onOpenChange(false);
@@ -113,12 +134,14 @@ export default function NewLinkDialog({
       if (msg.toLowerCase().includes("id")) {
         setIdError(msg);
       } else {
-        setUrlError(msg);
+        setError(msg);
       }
     } finally {
       setLoading(false);
     }
   }
+
+  const canCreate = multi ? validDests.length >= 1 : !!url;
 
   return (
     <Dialog
@@ -128,10 +151,12 @@ export default function NewLinkDialog({
         onOpenChange(d.open);
       }}
     >
-      <DialogSurface>
+      <DialogSurface style={multi ? { maxWidth: "560px" } : undefined}>
         <DialogBody>
           <DialogTitle>New short link</DialogTitle>
-          <DialogContent>
+          <DialogContent
+            style={multi ? { maxHeight: "60vh", overflowY: "auto" } : undefined}
+          >
             <div className={styles.form}>
               <Field
                 label="Custom ID"
@@ -145,34 +170,52 @@ export default function NewLinkDialog({
                   onChange={(_, d) => setId(d.value)}
                 />
               </Field>
-              <Field
-                label="Destination URL"
-                required
-                validationState={urlError ? "error" : undefined}
-                validationMessage={urlError || undefined}
-              >
-                <Input
-                  placeholder="https://example.com"
-                  value={url}
-                  onChange={(_, d) => setUrl(d.value)}
-                />
-              </Field>
+              {!multi && (
+                <Field
+                  label="Destination URL"
+                  required
+                  validationState={error ? "error" : undefined}
+                  validationMessage={error || undefined}
+                >
+                  <Input
+                    placeholder="https://example.com"
+                    value={url}
+                    onChange={(_, d) => setUrl(d.value)}
+                  />
+                </Field>
+              )}
               <Field
                 label="Title"
-                hint="Optional — shown on the interstitial page"
+                hint={
+                  multi
+                    ? "Shown at the top of the selection page"
+                    : "Optional — shown on the interstitial page"
+                }
               >
                 <Input
-                  placeholder="e.g. Visit our website"
+                  placeholder={
+                    multi
+                      ? "e.g. Choose a destination"
+                      : "e.g. Visit our website"
+                  }
                   value={title}
                   onChange={(_, d) => setTitle(d.value)}
                 />
               </Field>
               <Field
                 label="Description"
-                hint="Optional — shown on the interstitial page"
+                hint={
+                  multi
+                    ? "Shown below the title"
+                    : "Optional — shown on the interstitial page"
+                }
               >
                 <Textarea
-                  placeholder="e.g. You're about to visit…"
+                  placeholder={
+                    multi
+                      ? "e.g. Select one of the options below"
+                      : "e.g. You're about to visit…"
+                  }
                   value={description}
                   onChange={(_, d) => setDescription(d.value)}
                   rows={2}
@@ -241,6 +284,35 @@ export default function NewLinkDialog({
                   />
                 </Field>
               )}
+              <Field label="Multi-select link">
+                <Switch
+                  checked={multi}
+                  onChange={(_, d) => setMulti(d.checked)}
+                  label={
+                    multi
+                      ? "Enabled — visitors choose a destination"
+                      : "Disabled — single destination"
+                  }
+                />
+              </Field>
+              {multi && (
+                <>
+                  {error && (
+                    <div
+                      style={{
+                        color: tokens.colorPaletteRedForeground1,
+                        fontSize: tokens.fontSizeBase200,
+                      }}
+                    >
+                      {error}
+                    </div>
+                  )}
+                  <DestinationsEditor
+                    destinations={destinations}
+                    onChange={setDestinations}
+                  />
+                </>
+              )}
             </div>
           </DialogContent>
           <DialogActions>
@@ -249,7 +321,7 @@ export default function NewLinkDialog({
             </DialogTrigger>
             <Button
               appearance="primary"
-              disabled={loading || !url}
+              disabled={loading || !canCreate}
               onClick={() => void handleCreate()}
             >
               {loading ? "Creating…" : "Create"}

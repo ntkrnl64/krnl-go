@@ -4,7 +4,6 @@ import {
   DatabaseRegular,
   DeleteRegular,
   DismissRegular,
-  GridRegular,
   LinkRegular,
   LockClosedRegular,
   MergeRegular,
@@ -36,7 +35,6 @@ import EditLinkDialog from "./admin/EditLinkDialog";
 import LinksTable from "./admin/LinksTable";
 import NewLinkDialog from "./admin/NewLinkDialog";
 import MigrateKVDialog from "./admin/MigrateKVDialog";
-import NewMultiLinkDialog from "./admin/NewMultiLinkDialog";
 import SettingsDialog from "./admin/SettingsDialog";
 
 const useStyles = makeStyles({
@@ -155,7 +153,6 @@ export default function AdminPage({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
-  const [newMultiOpen, setNewMultiOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [migrateOpen, setMigrateOpen] = useState(false);
@@ -258,13 +255,6 @@ export default function AdminPage({
             onClick={() => setNewOpen(true)}
           >
             New link
-          </Button>
-          <Button
-            appearance="primary"
-            icon={<GridRegular />}
-            onClick={() => setNewMultiOpen(true)}
-          >
-            Multi-select
           </Button>
           <Button
             appearance="subtle"
@@ -442,12 +432,6 @@ export default function AdminPage({
       <NewLinkDialog
         open={newOpen}
         onOpenChange={setNewOpen}
-        onCreated={handleCreated}
-        backendJs={backendJs}
-      />
-      <NewMultiLinkDialog
-        open={newMultiOpen}
-        onOpenChange={setNewMultiOpen}
         onCreated={handleCreated}
         backendJs={backendJs}
       />

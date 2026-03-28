@@ -14,6 +14,7 @@ import {
   Input,
   Option,
   Spinner,
+  Switch,
   Textarea,
   makeStyles,
   tokens,
@@ -102,6 +103,7 @@ export default function EditLinkDialog({
   const [aliases, setAliases] = useState<string[]>([]);
   const [customJsFrontend, setCustomJsFrontend] = useState("");
   const [customJsBackend, setCustomJsBackend] = useState("");
+  const [multi, setMulti] = useState(false);
   const [destinations, setDestinations] = useState<MultiDestination[]>([]);
   const [newAlias, setNewAlias] = useState("");
   const [error, setError] = useState("");
@@ -122,7 +124,15 @@ export default function EditLinkDialog({
       setAliases(link.aliases ?? []);
       setCustomJsFrontend(link.customJsFrontend ?? "");
       setCustomJsBackend(link.customJsBackend ?? "");
-      setDestinations(link.destinations ?? []);
+      setMulti(!!link.multi);
+      setDestinations(
+        link.destinations?.length
+          ? link.destinations
+          : [
+              { url: "", title: "", autoRedirectChance: 0, position: 0 },
+              { url: "", title: "", autoRedirectChance: 0, position: 1 },
+            ],
+      );
       setError("");
       setAliasError("");
       setNewAlias("");
@@ -149,7 +159,8 @@ export default function EditLinkDialog({
         proxy,
         customJsFrontend: customJsFrontend || null,
         customJsBackend: customJsBackend || null,
-        ...(link.multi ? { multi: true, destinations: validDests } : {}),
+        multi,
+        ...(multi ? { destinations: validDests } : {}),
       });
       onUpdated(updated);
       onClose();
@@ -192,7 +203,7 @@ export default function EditLinkDialog({
 
   return (
     <Dialog open={link !== null} onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={link?.multi ? { maxWidth: "560px" } : undefined}>
+      <DialogSurface style={multi ? { maxWidth: "560px" } : undefined}>
         <DialogBody>
           <DialogTitle>
             <span className={styles.titleRow}>
@@ -200,9 +211,7 @@ export default function EditLinkDialog({
             </span>
           </DialogTitle>
           <DialogContent
-            style={
-              link?.multi ? { maxHeight: "60vh", overflowY: "auto" } : undefined
-            }
+            style={multi ? { maxHeight: "60vh", overflowY: "auto" } : undefined}
           >
             <div className={styles.form}>
               <Field
@@ -313,7 +322,18 @@ export default function EditLinkDialog({
                   />
                 </Field>
               )}
-              {link?.multi && (
+              <Field label="Multi-select link">
+                <Switch
+                  checked={multi}
+                  onChange={(_, d) => setMulti(d.checked)}
+                  label={
+                    multi
+                      ? "Enabled — visitors choose a destination"
+                      : "Disabled — single destination"
+                  }
+                />
+              </Field>
+              {multi && (
                 <Field label="Destinations">
                   <DestinationsEditor
                     destinations={destinations}
