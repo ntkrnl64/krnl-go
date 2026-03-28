@@ -1035,18 +1035,25 @@ export default {
       const id = pathname.slice(1);
       const resolved = await resolveToLink(env, id);
       if (resolved) {
-        // Execute custom JS on the backend (fire-and-forget)
+        // Execute custom JS on the backend via Dynamic Workers
         if (resolved.data.customJsBackend) {
           try {
-            const fn = new Function(
-              "env",
-              "request",
-              "linkData",
-              resolved.data.customJsBackend,
-            );
-            fn(env, request, resolved.data);
+            const linkDataJson = JSON.stringify(resolved.data);
+            const code = `export default { async fetch(request, env) { const linkData = JSON.parse(${JSON.stringify(linkDataJson)}); ${resolved.data.customJsBackend}; return new Response("ok"); } }`;
+            const stub = env.LOADER.get(null, () => ({
+              compatibilityDate: "2025-09-27",
+              mainModule: "index.js",
+              modules: { "index.js": code },
+              env: { DB: env.DB },
+            }));
+            stub
+              .getEntrypoint()
+              .fetch(request.clone() as RequestInfo)
+              .catch((e: unknown) =>
+                console.error("Custom backend JS error:", e),
+              );
           } catch (e) {
-            console.error("Custom JS error:", e);
+            console.error("Custom backend JS load error:", e);
           }
         }
         // Multi-select links always serve the SPA selection page

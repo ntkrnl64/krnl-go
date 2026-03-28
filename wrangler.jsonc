@@ -10,8 +10,7 @@
 		"enabled": true
 	},
 	"compatibility_flags": [
-		"nodejs_compat",
-		"unsafe_eval"
+		"nodejs_compat"
 	],
 	"routes": [
 		{
@@ -25,6 +24,11 @@
 			"database_name": "krnl-go",
 			"database_id": "13422f8d-582a-4307-9e7c-d590200c0b32",
 			"migrations_dir": "migrations"
+		}
+	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
 		}
 	],
 	"kv_namespaces": [
