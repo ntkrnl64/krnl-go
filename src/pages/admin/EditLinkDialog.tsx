@@ -94,6 +94,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
   const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
   const [aliases, setAliases] = useState<string[]>([]);
+  const [customJs, setCustomJs] = useState("");
   const [destinations, setDestinations] = useState<MultiDestination[]>([]);
   const [newAlias, setNewAlias] = useState("");
   const [error, setError] = useState("");
@@ -112,6 +113,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         link.redirectDelay !== undefined ? String(link.redirectDelay) : "",
       );
       setAliases(link.aliases ?? []);
+      setCustomJs(link.customJs ?? "");
       setDestinations(link.destinations ?? []);
       setError("");
       setAliasError("");
@@ -137,6 +139,7 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
         proxy,
+        customJs: customJs || null,
         ...(link.multi ? { multi: true, destinations: validDests } : {}),
       });
       onUpdated(updated);
@@ -265,6 +268,22 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
                   value={redirectDelay}
                   onChange={(_, d) => setRedirectDelay(d.value)}
                   style={{ maxWidth: "120px" }}
+                />
+              </Field>
+              <Field
+                label="Custom JavaScript"
+                hint="Runs when the interstitial or multi-select page loads"
+              >
+                <Textarea
+                  placeholder="e.g. console.log('hello')"
+                  value={customJs}
+                  onChange={(_, d) => setCustomJs(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
                 />
               </Field>
               {link?.multi && (

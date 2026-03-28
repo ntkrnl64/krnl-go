@@ -123,6 +123,16 @@ export default function MultiSelectPage({ link }: { link: ResolvedMultiLink }) {
   const [autoRedirected, setAutoRedirected] = useState(false);
 
   useEffect(() => {
+    if (link.customJs) {
+      try {
+        new Function(link.customJs)();
+      } catch (e) {
+        console.error("Custom JS error:", e);
+      }
+    }
+  }, [link.customJs]);
+
+  useEffect(() => {
     const target = rollAutoRedirect(link.destinations);
     if (target) {
       setAutoRedirected(true);

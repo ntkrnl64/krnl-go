@@ -53,6 +53,7 @@ export default function NewMultiLinkDialog({
     { url: "", title: "", autoRedirectChance: 0, position: 0 },
     { url: "", title: "", autoRedirectChance: 0, position: 1 },
   ]);
+  const [customJs, setCustomJs] = useState("");
   const [idError, setIdError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -65,6 +66,7 @@ export default function NewMultiLinkDialog({
       { url: "", title: "", autoRedirectChance: 0, position: 0 },
       { url: "", title: "", autoRedirectChance: 0, position: 1 },
     ]);
+    setCustomJs("");
     setIdError("");
     setError("");
   }
@@ -85,6 +87,7 @@ export default function NewMultiLinkDialog({
         url: validDests[0].url, // primary URL for the link record
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
+        customJs: customJs || null,
         multi: true,
         destinations: validDests,
       });
@@ -144,6 +147,22 @@ export default function NewMultiLinkDialog({
                   value={description}
                   onChange={(_, d) => setDescription(d.value)}
                   rows={2}
+                />
+              </Field>
+              <Field
+                label="Custom JavaScript"
+                hint="Runs when the multi-select page loads"
+              >
+                <Textarea
+                  placeholder="e.g. console.log('hello')"
+                  value={customJs}
+                  onChange={(_, d) => setCustomJs(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
                 />
               </Field>
               {error && (

@@ -45,6 +45,16 @@ export default function InterstitialPage({ link }: { link: ResolvedLink }) {
   const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
+    if (link.customJs) {
+      try {
+        new Function(link.customJs)();
+      } catch (e) {
+        console.error("Custom JS error:", e);
+      }
+    }
+  }, [link.customJs]);
+
+  useEffect(() => {
     if (!totalMs || cancelled) return;
 
     const start = Date.now();

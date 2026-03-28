@@ -62,6 +62,7 @@ export default function NewLinkDialog({
   const [interstitial, setInterstitial] = useState<TriStateMode>("default");
   const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
+  const [customJs, setCustomJs] = useState("");
   const [idError, setIdError] = useState("");
   const [urlError, setUrlError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -74,6 +75,7 @@ export default function NewLinkDialog({
     setInterstitial("default");
     setProxy("default");
     setRedirectDelay("");
+    setCustomJs("");
     setIdError("");
     setUrlError("");
   }
@@ -94,6 +96,7 @@ export default function NewLinkDialog({
         ...(description ? { description } : {}),
         interstitial,
         proxy,
+        customJs: customJs || null,
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
       });
@@ -198,6 +201,22 @@ export default function NewLinkDialog({
                   <Option value="always">Always show</Option>
                   <Option value="never">Never show</Option>
                 </Dropdown>
+              </Field>
+              <Field
+                label="Custom JavaScript"
+                hint="Runs when the interstitial or multi-select page loads"
+              >
+                <Textarea
+                  placeholder="e.g. console.log('hello')"
+                  value={customJs}
+                  onChange={(_, d) => setCustomJs(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
+                />
               </Field>
             </div>
           </DialogContent>

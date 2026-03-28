@@ -22,6 +22,7 @@ interface LinkData {
   aliases?: string[]; // other IDs that redirect here
   multi?: boolean;
   destinations?: MultiDestination[];
+  customJs?: string; // custom JavaScript to execute when link is visited
 }
 
 interface GlobalConfig {
@@ -225,6 +226,7 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
       redirect_delay: number | null;
       proxy: number | null;
       multi: number | null;
+      custom_js: string | null;
     }>();
   if (!row) return null;
   const aliases = await getAliases(env, id);
@@ -244,6 +246,7 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
     ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
     ...(aliases.length ? { aliases } : {}),
     ...(isMulti ? { multi: true, destinations } : {}),
+    ...(row.custom_js ? { customJs: row.custom_js } : {}),
   };
 }
 
@@ -291,6 +294,7 @@ interface LinkPayload {
   proxy?: TriStateMode;
   multi?: boolean;
   destinations?: MultiDestination[];
+  customJs?: string | null;
 }
 
 function applyLinkPayload(
@@ -314,14 +318,19 @@ function applyLinkPayload(
     base.multi = true;
     base.destinations = body.destinations ?? [];
   }
+  if (typeof body.customJs === "string") {
+    base.customJs = body.customJs || undefined;
+  } else if (body.customJs === null) {
+    base.customJs = undefined;
+  }
   return base;
 }
 
 /** Upserts a LinkData into the links table + multi-destinations. */
 async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy, multi)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy, multi, custom_js)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        url = excluded.url,
        title = excluded.title,
@@ -329,7 +338,8 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
        interstitial = excluded.interstitial,
        redirect_delay = excluded.redirect_delay,
        proxy = excluded.proxy,
-       multi = excluded.multi`,
+       multi = excluded.multi,
+       custom_js = excluded.custom_js`,
   )
     .bind(
       id,
@@ -341,6 +351,7 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
       data.redirectDelay ?? null,
       data.proxy !== undefined ? (data.proxy ? 1 : 0) : null,
       data.multi ? 1 : null,
+      data.customJs ?? null,
     )
     .run();
   if (data.multi && data.destinations) {
@@ -360,6 +371,7 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     aliases,
     multi,
     destinations,
+    customJs,
   } = data;
   return {
     id,
@@ -372,6 +384,7 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     ...(proxy !== undefined ? { proxy } : {}),
     ...(aliases?.length ? { aliases } : {}),
     ...(multi ? { multi: true, destinations: destinations ?? [] } : {}),
+    ...(customJs ? { customJs } : {}),
   };
 }
 
@@ -475,6 +488,7 @@ async function handleAPI(
         description:
           resolved.data.description ?? config.interstitialDescription,
         destinations: resolved.data.destinations,
+        ...(resolved.data.customJs ? { customJs: resolved.data.customJs } : {}),
       });
     }
     return json({
@@ -482,6 +496,7 @@ async function handleAPI(
       title: resolved.data.title ?? config.interstitialTitle,
       description: resolved.data.description ?? config.interstitialDescription,
       redirectDelay: resolved.data.redirectDelay ?? config.redirectDelay,
+      ...(resolved.data.customJs ? { customJs: resolved.data.customJs } : {}),
     });
   }
 
@@ -620,6 +635,7 @@ async function handleAPI(
       redirect_delay: number | null;
       proxy: number | null;
       multi: number | null;
+      custom_js: string | null;
     }>();
     const links = await Promise.all(
       results.map(async (row) => {
@@ -642,6 +658,7 @@ async function handleAPI(
           ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
           ...(aliases.length ? { aliases } : {}),
           ...(isMulti ? { multi: true, destinations } : {}),
+          ...(row.custom_js ? { customJs: row.custom_js } : {}),
         };
         return linkToResponse(row.id, data);
       }),

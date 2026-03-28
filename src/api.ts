@@ -85,6 +85,7 @@ export interface ShortLink {
   aliases?: string[];
   multi?: boolean;
   destinations?: MultiDestination[];
+  customJs?: string;
 }
 
 export interface ResolvedLink {
@@ -92,6 +93,7 @@ export interface ResolvedLink {
   title: string;
   description: string;
   redirectDelay: number;
+  customJs?: string;
 }
 
 export interface ResolvedMultiLink {
@@ -99,6 +101,7 @@ export interface ResolvedMultiLink {
   title: string;
   description: string;
   destinations: MultiDestination[];
+  customJs?: string;
 }
 
 export interface GlobalConfig {
@@ -124,6 +127,7 @@ export interface LinkPayload {
   proxy?: TriStateMode;
   multi?: boolean;
   destinations?: MultiDestination[];
+  customJs?: string | null;
 }
 
 export interface CreateLinkResult extends ShortLink {

@@ -1,0 +1,1 @@
+ALTER TABLE links ADD COLUMN custom_js TEXT;
