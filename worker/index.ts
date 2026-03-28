@@ -22,7 +22,8 @@ interface LinkData {
   aliases?: string[]; // other IDs that redirect here
   multi?: boolean;
   destinations?: MultiDestination[];
-  customJs?: string; // custom JavaScript to execute when link is visited
+  customJsFrontend?: string;
+  customJsBackend?: string;
 }
 
 interface GlobalConfig {
@@ -226,7 +227,8 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
       redirect_delay: number | null;
       proxy: number | null;
       multi: number | null;
-      custom_js: string | null;
+      custom_js_frontend: string | null;
+      custom_js_backend: string | null;
     }>();
   if (!row) return null;
   const aliases = await getAliases(env, id);
@@ -246,7 +248,12 @@ async function getLink(env: Env, id: string): Promise<LinkData | null> {
     ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
     ...(aliases.length ? { aliases } : {}),
     ...(isMulti ? { multi: true, destinations } : {}),
-    ...(row.custom_js ? { customJs: row.custom_js } : {}),
+    ...(row.custom_js_frontend
+      ? { customJsFrontend: row.custom_js_frontend }
+      : {}),
+    ...(row.custom_js_backend
+      ? { customJsBackend: row.custom_js_backend }
+      : {}),
   };
 }
 
@@ -294,7 +301,8 @@ interface LinkPayload {
   proxy?: TriStateMode;
   multi?: boolean;
   destinations?: MultiDestination[];
-  customJs?: string | null;
+  customJsFrontend?: string | null;
+  customJsBackend?: string | null;
 }
 
 function applyLinkPayload(
@@ -318,10 +326,15 @@ function applyLinkPayload(
     base.multi = true;
     base.destinations = body.destinations ?? [];
   }
-  if (typeof body.customJs === "string") {
-    base.customJs = body.customJs || undefined;
-  } else if (body.customJs === null) {
-    base.customJs = undefined;
+  if (typeof body.customJsFrontend === "string") {
+    base.customJsFrontend = body.customJsFrontend || undefined;
+  } else if (body.customJsFrontend === null) {
+    base.customJsFrontend = undefined;
+  }
+  if (typeof body.customJsBackend === "string") {
+    base.customJsBackend = body.customJsBackend || undefined;
+  } else if (body.customJsBackend === null) {
+    base.customJsBackend = undefined;
   }
   return base;
 }
@@ -329,8 +342,8 @@ function applyLinkPayload(
 /** Upserts a LinkData into the links table + multi-destinations. */
 async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy, multi, custom_js)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (id, url, created_at, title, description, interstitial, redirect_delay, proxy, multi, custom_js_frontend, custom_js_backend)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        url = excluded.url,
        title = excluded.title,
@@ -339,7 +352,8 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
        redirect_delay = excluded.redirect_delay,
        proxy = excluded.proxy,
        multi = excluded.multi,
-       custom_js = excluded.custom_js`,
+       custom_js_frontend = excluded.custom_js_frontend,
+       custom_js_backend = excluded.custom_js_backend`,
   )
     .bind(
       id,
@@ -351,7 +365,8 @@ async function saveLink(env: Env, id: string, data: LinkData): Promise<void> {
       data.redirectDelay ?? null,
       data.proxy !== undefined ? (data.proxy ? 1 : 0) : null,
       data.multi ? 1 : null,
-      data.customJs ?? null,
+      data.customJsFrontend ?? null,
+      data.customJsBackend ?? null,
     )
     .run();
   if (data.multi && data.destinations) {
@@ -371,7 +386,8 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     aliases,
     multi,
     destinations,
-    customJs,
+    customJsFrontend,
+    customJsBackend,
   } = data;
   return {
     id,
@@ -384,7 +400,8 @@ function linkToResponse(id: string, data: LinkData): Record<string, unknown> {
     ...(proxy !== undefined ? { proxy } : {}),
     ...(aliases?.length ? { aliases } : {}),
     ...(multi ? { multi: true, destinations: destinations ?? [] } : {}),
-    ...(customJs ? { customJs } : {}),
+    ...(customJsFrontend ? { customJsFrontend } : {}),
+    ...(customJsBackend ? { customJsBackend } : {}),
   };
 }
 
@@ -488,7 +505,9 @@ async function handleAPI(
         description:
           resolved.data.description ?? config.interstitialDescription,
         destinations: resolved.data.destinations,
-        ...(resolved.data.customJs ? { customJs: resolved.data.customJs } : {}),
+        ...(resolved.data.customJsFrontend
+          ? { customJs: resolved.data.customJsFrontend }
+          : {}),
       });
     }
     return json({
@@ -496,7 +515,9 @@ async function handleAPI(
       title: resolved.data.title ?? config.interstitialTitle,
       description: resolved.data.description ?? config.interstitialDescription,
       redirectDelay: resolved.data.redirectDelay ?? config.redirectDelay,
-      ...(resolved.data.customJs ? { customJs: resolved.data.customJs } : {}),
+      ...(resolved.data.customJsFrontend
+        ? { customJs: resolved.data.customJsFrontend }
+        : {}),
     });
   }
 
@@ -635,7 +656,8 @@ async function handleAPI(
       redirect_delay: number | null;
       proxy: number | null;
       multi: number | null;
-      custom_js: string | null;
+      custom_js_frontend: string | null;
+      custom_js_backend: string | null;
     }>();
     const links = await Promise.all(
       results.map(async (row) => {
@@ -658,7 +680,12 @@ async function handleAPI(
           ...(row.proxy !== null ? { proxy: row.proxy === 1 } : {}),
           ...(aliases.length ? { aliases } : {}),
           ...(isMulti ? { multi: true, destinations } : {}),
-          ...(row.custom_js ? { customJs: row.custom_js } : {}),
+          ...(row.custom_js_frontend
+            ? { customJsFrontend: row.custom_js_frontend }
+            : {}),
+          ...(row.custom_js_backend
+            ? { customJsBackend: row.custom_js_backend }
+            : {}),
         };
         return linkToResponse(row.id, data);
       }),
@@ -1008,6 +1035,20 @@ export default {
       const id = pathname.slice(1);
       const resolved = await resolveToLink(env, id);
       if (resolved) {
+        // Execute custom JS on the backend (fire-and-forget)
+        if (resolved.data.customJsBackend) {
+          try {
+            const fn = new Function(
+              "env",
+              "request",
+              "linkData",
+              resolved.data.customJsBackend,
+            );
+            fn(env, request, resolved.data);
+          } catch (e) {
+            console.error("Custom JS error:", e);
+          }
+        }
         // Multi-select links always serve the SPA selection page
         if (resolved.data.multi) {
           return serveIndex(request, env);

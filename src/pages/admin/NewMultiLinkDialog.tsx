@@ -53,7 +53,8 @@ export default function NewMultiLinkDialog({
     { url: "", title: "", autoRedirectChance: 0, position: 0 },
     { url: "", title: "", autoRedirectChance: 0, position: 1 },
   ]);
-  const [customJs, setCustomJs] = useState("");
+  const [customJsFrontend, setCustomJsFrontend] = useState("");
+  const [customJsBackend, setCustomJsBackend] = useState("");
   const [idError, setIdError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -66,7 +67,8 @@ export default function NewMultiLinkDialog({
       { url: "", title: "", autoRedirectChance: 0, position: 0 },
       { url: "", title: "", autoRedirectChance: 0, position: 1 },
     ]);
-    setCustomJs("");
+    setCustomJsFrontend("");
+    setCustomJsBackend("");
     setIdError("");
     setError("");
   }
@@ -87,7 +89,8 @@ export default function NewMultiLinkDialog({
         url: validDests[0].url, // primary URL for the link record
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
-        customJs: customJs || null,
+        customJsFrontend: customJsFrontend || null,
+        customJsBackend: customJsBackend || null,
         multi: true,
         destinations: validDests,
       });
@@ -150,13 +153,29 @@ export default function NewMultiLinkDialog({
                 />
               </Field>
               <Field
-                label="Custom JavaScript"
-                hint="Runs when the multi-select page loads"
+                label="Custom JS (frontend)"
+                hint="Runs in the browser on multi-select page"
               >
                 <Textarea
                   placeholder="e.g. console.log('hello')"
-                  value={customJs}
-                  onChange={(_, d) => setCustomJs(d.value)}
+                  value={customJsFrontend}
+                  onChange={(_, d) => setCustomJsFrontend(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
+                />
+              </Field>
+              <Field
+                label="Custom JS (backend)"
+                hint="Runs on the worker when the link is visited — has access to env, request, linkData"
+              >
+                <Textarea
+                  placeholder="e.g. await env.DB.prepare('...').run()"
+                  value={customJsBackend}
+                  onChange={(_, d) => setCustomJsBackend(d.value)}
                   rows={3}
                   style={{
                     fontFamily:

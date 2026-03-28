@@ -94,7 +94,8 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
   const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
   const [aliases, setAliases] = useState<string[]>([]);
-  const [customJs, setCustomJs] = useState("");
+  const [customJsFrontend, setCustomJsFrontend] = useState("");
+  const [customJsBackend, setCustomJsBackend] = useState("");
   const [destinations, setDestinations] = useState<MultiDestination[]>([]);
   const [newAlias, setNewAlias] = useState("");
   const [error, setError] = useState("");
@@ -113,7 +114,8 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         link.redirectDelay !== undefined ? String(link.redirectDelay) : "",
       );
       setAliases(link.aliases ?? []);
-      setCustomJs(link.customJs ?? "");
+      setCustomJsFrontend(link.customJsFrontend ?? "");
+      setCustomJsBackend(link.customJsBackend ?? "");
       setDestinations(link.destinations ?? []);
       setError("");
       setAliasError("");
@@ -139,7 +141,8 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
         proxy,
-        customJs: customJs || null,
+        customJsFrontend: customJsFrontend || null,
+        customJsBackend: customJsBackend || null,
         ...(link.multi ? { multi: true, destinations: validDests } : {}),
       });
       onUpdated(updated);
@@ -271,13 +274,29 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
                 />
               </Field>
               <Field
-                label="Custom JavaScript"
-                hint="Runs when the interstitial or multi-select page loads"
+                label="Custom JS (frontend)"
+                hint="Runs in the browser on interstitial / multi-select page"
               >
                 <Textarea
                   placeholder="e.g. console.log('hello')"
-                  value={customJs}
-                  onChange={(_, d) => setCustomJs(d.value)}
+                  value={customJsFrontend}
+                  onChange={(_, d) => setCustomJsFrontend(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
+                />
+              </Field>
+              <Field
+                label="Custom JS (backend)"
+                hint="Runs on the worker when the link is visited — has access to env, request, linkData"
+              >
+                <Textarea
+                  placeholder="e.g. await env.DB.prepare('...').run()"
+                  value={customJsBackend}
+                  onChange={(_, d) => setCustomJsBackend(d.value)}
                   rows={3}
                   style={{
                     fontFamily:

@@ -85,7 +85,8 @@ export interface ShortLink {
   aliases?: string[];
   multi?: boolean;
   destinations?: MultiDestination[];
-  customJs?: string;
+  customJsFrontend?: string;
+  customJsBackend?: string;
 }
 
 export interface ResolvedLink {
@@ -127,7 +128,8 @@ export interface LinkPayload {
   proxy?: TriStateMode;
   multi?: boolean;
   destinations?: MultiDestination[];
-  customJs?: string | null;
+  customJsFrontend?: string | null;
+  customJsBackend?: string | null;
 }
 
 export interface CreateLinkResult extends ShortLink {

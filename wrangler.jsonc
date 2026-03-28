@@ -10,7 +10,8 @@
 		"enabled": true
 	},
 	"compatibility_flags": [
-		"nodejs_compat"
+		"nodejs_compat",
+		"unsafe_eval"
 	],
 	"routes": [
 		{

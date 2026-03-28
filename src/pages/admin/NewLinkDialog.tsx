@@ -62,7 +62,8 @@ export default function NewLinkDialog({
   const [interstitial, setInterstitial] = useState<TriStateMode>("default");
   const [proxy, setProxy] = useState<TriStateMode>("default");
   const [redirectDelay, setRedirectDelay] = useState("");
-  const [customJs, setCustomJs] = useState("");
+  const [customJsFrontend, setCustomJsFrontend] = useState("");
+  const [customJsBackend, setCustomJsBackend] = useState("");
   const [idError, setIdError] = useState("");
   const [urlError, setUrlError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -75,7 +76,8 @@ export default function NewLinkDialog({
     setInterstitial("default");
     setProxy("default");
     setRedirectDelay("");
-    setCustomJs("");
+    setCustomJsFrontend("");
+    setCustomJsBackend("");
     setIdError("");
     setUrlError("");
   }
@@ -96,7 +98,8 @@ export default function NewLinkDialog({
         ...(description ? { description } : {}),
         interstitial,
         proxy,
-        customJs: customJs || null,
+        customJsFrontend: customJsFrontend || null,
+        customJsBackend: customJsBackend || null,
         redirectDelay:
           redirectDelay === "" ? null : Math.max(0, Number(redirectDelay) || 0),
       });
@@ -203,13 +206,29 @@ export default function NewLinkDialog({
                 </Dropdown>
               </Field>
               <Field
-                label="Custom JavaScript"
-                hint="Runs when the interstitial or multi-select page loads"
+                label="Custom JS (frontend)"
+                hint="Runs in the browser on interstitial / multi-select page"
               >
                 <Textarea
                   placeholder="e.g. console.log('hello')"
-                  value={customJs}
-                  onChange={(_, d) => setCustomJs(d.value)}
+                  value={customJsFrontend}
+                  onChange={(_, d) => setCustomJsFrontend(d.value)}
+                  rows={3}
+                  style={{
+                    fontFamily:
+                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                    fontSize: "13px",
+                  }}
+                />
+              </Field>
+              <Field
+                label="Custom JS (backend)"
+                hint="Runs on the worker when the link is visited — has access to env, request, linkData"
+              >
+                <Textarea
+                  placeholder="e.g. await env.DB.prepare('...').run()"
+                  value={customJsBackend}
+                  onChange={(_, d) => setCustomJsBackend(d.value)}
                   rows={3}
                   style={{
                     fontFamily:
