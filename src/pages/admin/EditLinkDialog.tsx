@@ -83,9 +83,15 @@ interface Props {
   link: ShortLink | null;
   onClose: () => void;
   onUpdated: (link: ShortLink) => void;
+  backendJs?: boolean;
 }
 
-export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
+export default function EditLinkDialog({
+  link,
+  onClose,
+  onUpdated,
+  backendJs: backendJsEnabled,
+}: Props) {
   const styles = useStyles();
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -289,22 +295,24 @@ export default function EditLinkDialog({ link, onClose, onUpdated }: Props) {
                   }}
                 />
               </Field>
-              <Field
-                label="Custom JS (backend)"
-                hint="Runs on the worker when the link is visited — has access to env, request, linkData"
-              >
-                <Textarea
-                  placeholder="e.g. await env.DB.prepare('...').run()"
-                  value={customJsBackend}
-                  onChange={(_, d) => setCustomJsBackend(d.value)}
-                  rows={3}
-                  style={{
-                    fontFamily:
-                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
-                    fontSize: "13px",
-                  }}
-                />
-              </Field>
+              {backendJsEnabled && (
+                <Field
+                  label="Custom JS (backend)"
+                  hint="Runs on the worker when the link is visited — has access to env, request, linkData"
+                >
+                  <Textarea
+                    placeholder="e.g. await env.DB.prepare('...').run()"
+                    value={customJsBackend}
+                    onChange={(_, d) => setCustomJsBackend(d.value)}
+                    rows={3}
+                    style={{
+                      fontFamily:
+                        "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                      fontSize: "13px",
+                    }}
+                  />
+                </Field>
+              )}
               {link?.multi && (
                 <Field label="Destinations">
                   <DestinationsEditor

@@ -20,9 +20,14 @@ function authHeaders(): Record<string, string> {
 export async function checkStatus(): Promise<{
   setup: boolean;
   noTokenCheck?: boolean;
+  backendJs?: boolean;
 }> {
   const res = await fetch("/api/status");
-  return res.json() as Promise<{ setup: boolean; noTokenCheck?: boolean }>;
+  return res.json() as Promise<{
+    setup: boolean;
+    noTokenCheck?: boolean;
+    backendJs?: boolean;
+  }>;
 }
 
 export async function setup(password: string): Promise<void> {

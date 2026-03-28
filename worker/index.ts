@@ -429,7 +429,12 @@ async function handleAPI(
         ? (await env.LEGACY_KV.get("__admin__")) !== null
         : false;
     const setup = noTokenCheck || admin !== null || kvAdmin;
-    return json({ setup, noTokenCheck, kvPending: kvAdmin });
+    return json({
+      setup,
+      noTokenCheck,
+      kvPending: kvAdmin,
+      backendJs: !!env.LOADER,
+    });
   }
 
   // POST /api/setup
@@ -1036,7 +1041,7 @@ export default {
       const resolved = await resolveToLink(env, id);
       if (resolved) {
         // Execute custom JS on the backend via Dynamic Workers
-        if (resolved.data.customJsBackend) {
+        if (resolved.data.customJsBackend && env.LOADER) {
           try {
             const linkDataJson = JSON.stringify(resolved.data);
             const code = `export default { async fetch(request, env) { const linkData = JSON.parse(${JSON.stringify(linkDataJson)}); ${resolved.data.customJsBackend}; return new Response("ok"); } }`;

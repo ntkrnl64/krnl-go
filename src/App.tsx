@@ -54,6 +54,7 @@ export default function App() {
     null,
   );
   const [noTokenCheck, setNoTokenCheck] = useState(false);
+  const [backendJs, setBackendJs] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -76,7 +77,12 @@ export default function App() {
       }
 
       try {
-        const { setup, noTokenCheck: ntc } = await checkStatus();
+        const {
+          setup,
+          noTokenCheck: ntc,
+          backendJs: bjs,
+        } = await checkStatus();
+        if (bjs) setBackendJs(true);
         if (ntc) {
           setNoTokenCheck(true);
           setState("ready");
@@ -125,7 +131,11 @@ export default function App() {
           <LoginCard onLogin={() => setState("ready")} />
         )}
         {state === "ready" && !shortId && (
-          <AdminPage onLogout={onLogout} noTokenCheck={noTokenCheck} />
+          <AdminPage
+            onLogout={onLogout}
+            noTokenCheck={noTokenCheck}
+            backendJs={backendJs}
+          />
         )}
         {state === "ready" && shortId && (
           <CreateLinkPage id={shortId} onLogout={onLogout} />

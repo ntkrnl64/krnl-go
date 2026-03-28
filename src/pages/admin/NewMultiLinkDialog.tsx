@@ -38,12 +38,14 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (link: CreateLinkResult) => void;
+  backendJs?: boolean;
 }
 
 export default function NewMultiLinkDialog({
   open,
   onOpenChange,
   onCreated,
+  backendJs: backendJsEnabled,
 }: Props) {
   const styles = useStyles();
   const [id, setId] = useState("");
@@ -168,22 +170,24 @@ export default function NewMultiLinkDialog({
                   }}
                 />
               </Field>
-              <Field
-                label="Custom JS (backend)"
-                hint="Runs on the worker when the link is visited — has access to env, request, linkData"
-              >
-                <Textarea
-                  placeholder="e.g. await env.DB.prepare('...').run()"
-                  value={customJsBackend}
-                  onChange={(_, d) => setCustomJsBackend(d.value)}
-                  rows={3}
-                  style={{
-                    fontFamily:
-                      "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
-                    fontSize: "13px",
-                  }}
-                />
-              </Field>
+              {backendJsEnabled && (
+                <Field
+                  label="Custom JS (backend)"
+                  hint="Runs on the worker when the link is visited — has access to env, request, linkData"
+                >
+                  <Textarea
+                    placeholder="e.g. await env.DB.prepare('...').run()"
+                    value={customJsBackend}
+                    onChange={(_, d) => setCustomJsBackend(d.value)}
+                    rows={3}
+                    style={{
+                      fontFamily:
+                        "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+                      fontSize: "13px",
+                    }}
+                  />
+                </Field>
+              )}
               {error && (
                 <div
                   style={{

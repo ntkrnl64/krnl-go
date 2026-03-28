@@ -142,9 +142,14 @@ const useStyles = makeStyles({
 interface Props {
   onLogout: () => void;
   noTokenCheck: boolean;
+  backendJs: boolean;
 }
 
-export default function AdminPage({ onLogout, noTokenCheck }: Props) {
+export default function AdminPage({
+  onLogout,
+  noTokenCheck,
+  backendJs,
+}: Props) {
   const styles = useStyles();
   const [links, setLinks] = useState<ShortLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -438,15 +443,18 @@ export default function AdminPage({ onLogout, noTokenCheck }: Props) {
         open={newOpen}
         onOpenChange={setNewOpen}
         onCreated={handleCreated}
+        backendJs={backendJs}
       />
       <NewMultiLinkDialog
         open={newMultiOpen}
         onOpenChange={setNewMultiOpen}
         onCreated={handleCreated}
+        backendJs={backendJs}
       />
       <EditLinkDialog
         link={editLink}
         onClose={() => setEditLink(null)}
+        backendJs={backendJs}
         onUpdated={(updated) =>
           setLinks((prev) =>
             prev.map((l) => (l.id === updated.id ? updated : l)),
