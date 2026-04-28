@@ -135,7 +135,7 @@ export default function MultiSelectPage({ link }: { link: ResolvedMultiLink }) {
   useEffect(() => {
     const target = rollAutoRedirect(link.destinations);
     if (target) {
-      setAutoRedirected(true);
+      queueMicrotask(() => setAutoRedirected(true));
       window.location.href = target;
     }
   }, [link.destinations]);

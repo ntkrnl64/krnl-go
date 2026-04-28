@@ -1,4 +1,4 @@
-/// <reference path="../worker-configuration.d.ts" />
+import { PrismClient } from "@siiway/prism";
 
 interface MultiDestination {
   id?: number;
@@ -103,6 +103,98 @@ function generateId(): string {
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
+}
+
+interface AdminRow {
+  hash: string | null;
+  salt: string | null;
+  sub: string | null;
+}
+
+async function getAdmin(env: Env): Promise<AdminRow | null> {
+  return env.DB.prepare(
+    "SELECT hash, salt, sub FROM admin WHERE id = 1",
+  ).first<AdminRow>();
+}
+
+function getPrismRedirectUri(request: Request): string {
+  return new URL("/api/auth/prism/callback", request.url).toString();
+}
+
+interface PrismConfig {
+  baseUrl: string;
+  clientId: string;
+  clientSecret: string;
+  source: "db" | "env";
+}
+
+async function getPrismConfig(env: Env): Promise<PrismConfig | null> {
+  // DB config takes precedence over env vars
+  const row = await env.DB.prepare(
+    "SELECT base_url, client_id, client_secret FROM prism_config WHERE id = 1",
+  ).first<{ base_url: string; client_id: string; client_secret: string }>();
+  if (row) {
+    return {
+      baseUrl: row.base_url,
+      clientId: row.client_id,
+      clientSecret: row.client_secret,
+      source: "db",
+    };
+  }
+  if (env.PRISM_BASE_URL && env.PRISM_CLIENT_ID && env.PRISM_CLIENT_SECRET) {
+    return {
+      baseUrl: env.PRISM_BASE_URL,
+      clientId: env.PRISM_CLIENT_ID,
+      clientSecret: env.PRISM_CLIENT_SECRET,
+      source: "env",
+    };
+  }
+  return null;
+}
+
+async function getPrismClient(
+  env: Env,
+  request: Request,
+): Promise<PrismClient | null> {
+  const config = await getPrismConfig(env);
+  if (!config) return null;
+  return new PrismClient({
+    baseUrl: config.baseUrl,
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    redirectUri: getPrismRedirectUri(request),
+    scopes: ["openid", "profile", "email"],
+  });
+}
+
+async function mintSession(env: Env): Promise<string> {
+  const token = generateToken();
+  await env.DB.prepare("INSERT INTO sessions (token, expires_at) VALUES (?, ?)")
+    .bind(token, Date.now() + 86400 * 1000)
+    .run();
+  return token;
+}
+
+/** HTML response that stashes the session token in localStorage and redirects
+ *  to `/`. Used by the OAuth callback so the existing localStorage-based
+ *  frontend keeps working without a server-set cookie. */
+function sessionHandoff(token: string): Response {
+  const html = `<!doctype html><meta charset="utf-8"><title>Signing in…</title>
+<script>try{localStorage.setItem('krnl_go_token',${JSON.stringify(token)})}catch(e){}location.replace('/')</script>`;
+  return new Response(html, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+function oauthError(message: string): Response {
+  const html = `<!doctype html><meta charset="utf-8"><title>Sign-in failed</title>
+<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:80px auto;padding:0 24px;color:#222}a{color:#0078d4}</style>
+<h1>Sign-in failed</h1><p>${message.replace(/[<&>]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p><p><a href="/">Back to start</a></p>`;
+  return new Response(html, {
+    status: 400,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
 
 async function getAuth(request: Request, env: Env): Promise<boolean> {
@@ -412,37 +504,42 @@ async function handleAPI(
 ): Promise<Response> {
   const method = request.method;
 
-  // Clean up expired sessions opportunistically
+  // Clean up expired sessions and OAuth state opportunistically
   env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?")
+    .bind(Date.now())
+    .run();
+  env.DB.prepare("DELETE FROM oauth_state WHERE expires_at <= ?")
     .bind(Date.now())
     .run();
 
   // GET /api/status
   if (pathname === "/api/status" && method === "GET") {
     const noTokenCheck = env.KRNLGO_NO_TOKEN !== undefined;
-    const admin = await env.DB.prepare(
-      "SELECT 1 FROM admin WHERE id = 1",
-    ).first();
+    const admin = await getAdmin(env);
     // Also check legacy KV if D1 has no admin yet
     const kvAdmin =
       !admin && env.LEGACY_KV
         ? (await env.LEGACY_KV.get("__admin__")) !== null
         : false;
-    const setup = noTokenCheck || admin !== null || kvAdmin;
+    const passwordSet = !!(admin?.hash && admin.salt) || kvAdmin;
+    const prismBound = !!admin?.sub;
+    const prismConfig = await getPrismConfig(env);
+    const setup = noTokenCheck || passwordSet || prismBound;
     return json({
       setup,
       noTokenCheck,
       kvPending: kvAdmin,
       backendJs: !!env.LOADER,
+      prismEnabled: !!prismConfig,
+      prismBound,
+      passwordSet,
     });
   }
 
-  // POST /api/setup
+  // POST /api/setup — password-based setup (only when no admin exists yet)
   if (pathname === "/api/setup" && method === "POST") {
-    const existing = await env.DB.prepare(
-      "SELECT 1 FROM admin WHERE id = 1",
-    ).first();
-    if (existing) return json({ error: "Already set up" }, 400);
+    const admin = await getAdmin(env);
+    if (admin) return json({ error: "Already set up" }, 400);
     const { password } = (await request.json()) as { password: string };
     if (!password || password.length < 8)
       return json({ error: "Password must be at least 8 characters" }, 400);
@@ -453,17 +550,26 @@ async function handleAPI(
     return json({ ok: true });
   }
 
-  // POST /api/auth
+  // POST /api/auth — password login (disabled once Prism is bound)
   if (pathname === "/api/auth" && method === "POST") {
     let row = await env.DB.prepare(
-      "SELECT hash, salt FROM admin WHERE id = 1",
-    ).first<{ hash: string; salt: string }>();
+      "SELECT hash, salt, sub FROM admin WHERE id = 1",
+    ).first<AdminRow>();
     // Fall back to legacy KV credentials if D1 has no admin yet
     if (!row && env.LEGACY_KV) {
       const kvRaw = await env.LEGACY_KV.get("__admin__");
-      if (kvRaw) row = JSON.parse(kvRaw) as { hash: string; salt: string };
+      if (kvRaw) {
+        const kv = JSON.parse(kvRaw) as { hash: string; salt: string };
+        row = { hash: kv.hash, salt: kv.salt, sub: null };
+      }
     }
-    if (!row) return json({ error: "Not configured" }, 400);
+    if (!row || !row.hash || !row.salt)
+      return json({ error: "Not configured" }, 400);
+    if (row.sub)
+      return json(
+        { error: "Password login disabled — sign in with Prism" },
+        400,
+      );
     const { password } = (await request.json()) as { password: string };
     if (!(await verifyPassword(password, row.hash, row.salt)))
       return json({ error: "Invalid password" }, 401);
@@ -478,13 +584,182 @@ async function handleAPI(
         .bind(row.hash, row.salt)
         .run();
     }
-    const token = generateToken();
-    await env.DB.prepare(
-      "INSERT INTO sessions (token, expires_at) VALUES (?, ?)",
-    )
-      .bind(token, Date.now() + 86400 * 1000)
-      .run();
+    const token = await mintSession(env);
     return json({ token });
+  }
+
+  // POST /api/auth/prism/start — begin OAuth flow
+  // Body: { intent: 'login' | 'claim' | 'migrate' }
+  if (pathname === "/api/auth/prism/start" && method === "POST") {
+    const prism = await getPrismClient(env, request);
+    if (!prism) return json({ error: "Prism not configured" }, 400);
+    const { intent } = (await request.json().catch(() => ({}))) as {
+      intent?: string;
+    };
+    if (intent !== "login" && intent !== "claim" && intent !== "migrate")
+      return json({ error: "Invalid intent" }, 400);
+
+    const admin = await getAdmin(env);
+    if (intent === "claim" && admin)
+      return json({ error: "Admin already exists" }, 400);
+    if (intent === "login" && !admin?.sub)
+      return json({ error: "Prism is not bound — use claim or migrate" }, 400);
+    if (intent === "migrate") {
+      if (!admin) return json({ error: "Nothing to migrate" }, 400);
+      if (admin.sub) return json({ error: "Already migrated" }, 400);
+      // Only the existing password admin may initiate migration
+      if (!(await getAuth(request, env)))
+        return json({ error: "Unauthorized" }, 401);
+    }
+
+    const { url, pkce } = await prism.createAuthorizationUrl();
+    await env.DB.prepare(
+      "INSERT INTO oauth_state (state, code_verifier, intent, expires_at) VALUES (?, ?, ?, ?)",
+    )
+      .bind(pkce.state, pkce.codeVerifier, intent, Date.now() + 10 * 60 * 1000)
+      .run();
+    return json({ url });
+  }
+
+  // GET /api/prism/config — read current config (never returns secret)
+  // Allowed without auth when no admin exists, so the init page can read it.
+  if (pathname === "/api/prism/config" && method === "GET") {
+    const admin = await getAdmin(env);
+    if (admin && !(await getAuth(request, env)))
+      return json({ error: "Unauthorized" }, 401);
+    const config = await getPrismConfig(env);
+    if (!config) return json({ configured: false });
+    return json({
+      configured: true,
+      source: config.source,
+      baseUrl: config.baseUrl,
+      clientId: config.clientId,
+    });
+  }
+
+  // PUT /api/prism/config — write to D1 (overrides env vars).
+  // Allowed without auth only when no admin exists yet (init mode).
+  if (pathname === "/api/prism/config" && method === "PUT") {
+    const admin = await getAdmin(env);
+    if (admin && !(await getAuth(request, env)))
+      return json({ error: "Unauthorized" }, 401);
+    const body = (await request.json().catch(() => ({}))) as {
+      baseUrl?: string;
+      clientId?: string;
+      clientSecret?: string;
+    };
+    const baseUrl = body.baseUrl?.trim();
+    const clientId = body.clientId?.trim();
+    const clientSecret = body.clientSecret?.trim();
+    if (!baseUrl || !clientId || !clientSecret)
+      return json(
+        { error: "baseUrl, clientId, and clientSecret are all required" },
+        400,
+      );
+    try {
+      const u = new URL(baseUrl);
+      if (u.protocol !== "https:" && u.protocol !== "http:")
+        return json({ error: "baseUrl must be http(s)" }, 400);
+    } catch {
+      return json({ error: "Invalid baseUrl" }, 400);
+    }
+    const normalizedBase = baseUrl.replace(/\/+$/, "");
+    await env.DB.prepare(
+      `INSERT INTO prism_config (id, base_url, client_id, client_secret, updated_at)
+       VALUES (1, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         base_url = excluded.base_url,
+         client_id = excluded.client_id,
+         client_secret = excluded.client_secret,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(normalizedBase, clientId, clientSecret, Date.now())
+      .run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/prism/config — clear DB config (auth required, blocked
+  // when admin is currently bound to a Prism account to prevent lockout).
+  if (pathname === "/api/prism/config" && method === "DELETE") {
+    if (!(await getAuth(request, env)))
+      return json({ error: "Unauthorized" }, 401);
+    const admin = await getAdmin(env);
+    if (admin?.sub)
+      return json(
+        {
+          error:
+            "Cannot clear Prism config while admin is bound to a Prism account",
+        },
+        400,
+      );
+    await env.DB.prepare("DELETE FROM prism_config WHERE id = 1").run();
+    return json({ ok: true });
+  }
+
+  // GET /api/auth/prism/callback — finish OAuth flow
+  if (pathname === "/api/auth/prism/callback" && method === "GET") {
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const oauthErr = url.searchParams.get("error");
+    if (oauthErr)
+      return oauthError(url.searchParams.get("error_description") ?? oauthErr);
+    if (!code || !state) return oauthError("Missing code or state.");
+
+    const stateRow = await env.DB.prepare(
+      "SELECT code_verifier, intent, expires_at FROM oauth_state WHERE state = ?",
+    )
+      .bind(state)
+      .first<{ code_verifier: string; intent: string; expires_at: number }>();
+    if (!stateRow) return oauthError("Unknown or expired state.");
+    // One-time use
+    await env.DB.prepare("DELETE FROM oauth_state WHERE state = ?")
+      .bind(state)
+      .run();
+    if (stateRow.expires_at <= Date.now())
+      return oauthError("OAuth state expired. Please try again.");
+
+    const prism = await getPrismClient(env, request);
+    if (!prism) return oauthError("Prism is not configured.");
+
+    let sub: string;
+    try {
+      const tokens = await prism.exchangeCode(code, stateRow.code_verifier);
+      const userInfo = await prism.getUserInfo(tokens.access_token);
+      sub = userInfo.sub;
+    } catch (e) {
+      return oauthError(
+        e instanceof Error ? e.message : "Token exchange failed.",
+      );
+    }
+    if (!sub) return oauthError("Prism did not return a subject ID.");
+
+    const admin = await getAdmin(env);
+    if (stateRow.intent === "claim") {
+      if (admin) return oauthError("An admin already exists.");
+      await env.DB.prepare(
+        "INSERT INTO admin (id, hash, salt, sub) VALUES (1, NULL, NULL, ?)",
+      )
+        .bind(sub)
+        .run();
+    } else if (stateRow.intent === "migrate") {
+      if (!admin) return oauthError("No admin to migrate.");
+      if (admin.sub) return oauthError("Already migrated.");
+      // Bind the Prism subject and clear the password
+      await env.DB.prepare(
+        "UPDATE admin SET sub = ?, hash = NULL, salt = NULL WHERE id = 1",
+      )
+        .bind(sub)
+        .run();
+    } else {
+      // login
+      if (!admin?.sub) return oauthError("Prism is not bound on this site.");
+      if (admin.sub !== sub)
+        return oauthError("This Prism account is not the admin.");
+    }
+
+    const token = await mintSession(env);
+    return sessionHandoff(token);
   }
 
   // POST /api/logout
@@ -598,12 +873,13 @@ async function handleAPI(
     return json({ merged });
   }
 
-  // POST /api/password — change admin password
+  // POST /api/password — change admin password (disabled when Prism-bound)
   if (pathname === "/api/password" && method === "POST") {
-    const row = await env.DB.prepare(
-      "SELECT hash, salt FROM admin WHERE id = 1",
-    ).first<{ hash: string; salt: string }>();
+    const row = await getAdmin(env);
     if (!row) return json({ error: "Not configured" }, 400);
+    if (row.sub)
+      return json({ error: "Password is disabled — managed by Prism" }, 400);
+    if (!row.hash || !row.salt) return json({ error: "No password set" }, 400);
     const { currentPassword, newPassword } = (await request.json()) as {
       currentPassword: string;
       newPassword: string;

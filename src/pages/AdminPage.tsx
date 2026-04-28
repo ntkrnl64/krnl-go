@@ -7,6 +7,7 @@ import {
   LinkRegular,
   LockClosedRegular,
   MergeRegular,
+  PersonRegular,
   SearchRegular,
   SettingsRegular,
   SignOutRegular,
@@ -27,6 +28,7 @@ import {
   listLinks,
   logout,
   mergeLinks,
+  startPrismLogin,
 } from "../api";
 import { CODE_FONT } from "../components/LinkSlug";
 import ChangePasswordDialog from "./admin/ChangePasswordDialog";
@@ -35,6 +37,7 @@ import EditLinkDialog from "./admin/EditLinkDialog";
 import LinksTable from "./admin/LinksTable";
 import NewLinkDialog from "./admin/NewLinkDialog";
 import MigrateKVDialog from "./admin/MigrateKVDialog";
+import PrismSettingsDialog from "./admin/PrismSettingsDialog";
 import SettingsDialog from "./admin/SettingsDialog";
 
 const useStyles = makeStyles({
@@ -141,12 +144,18 @@ interface Props {
   onLogout: () => void;
   noTokenCheck: boolean;
   backendJs: boolean;
+  prismBound: boolean;
+  prismEnabled: boolean;
+  passwordSet: boolean;
 }
 
 export default function AdminPage({
   onLogout,
   noTokenCheck,
   backendJs,
+  prismBound,
+  prismEnabled,
+  passwordSet,
 }: Props) {
   const styles = useStyles();
   const [links, setLinks] = useState<ShortLink[]>([]);
@@ -156,6 +165,8 @@ export default function AdminPage({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [migrateOpen, setMigrateOpen] = useState(false);
+  const [prismSettingsOpen, setPrismSettingsOpen] = useState(false);
+  const [migratingPrism, setMigratingPrism] = useState(false);
   const [editLink, setEditLink] = useState<ShortLink | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -169,13 +180,40 @@ export default function AdminPage({
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    void listLinks()
+      .then((data) => {
+        if (!cancelled) setLinks(data);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogout() {
     await logout();
     onLogout();
   }
+
+  async function handleMigrateToPrism() {
+    setMigratingPrism(true);
+    try {
+      const url = await startPrismLogin("migrate");
+      window.location.href = url;
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Migration failed");
+      setMigratingPrism(false);
+    }
+  }
+
+  // When the admin is bound to a Prism account, password is gone and
+  // migration is irrelevant — hide all password-flavoured UI.
+  const showMigrateToPrism =
+    prismEnabled && !prismBound && passwordSet && !noTokenCheck;
+  const showPasswordChange = passwordSet && !prismBound && !noTokenCheck;
 
   function handleCreated(link: CreateLinkResult) {
     if (link.merged) {
@@ -271,6 +309,25 @@ export default function AdminPage({
             Settings
           </Button>
           {!noTokenCheck && (
+            <Button
+              appearance="subtle"
+              icon={<PersonRegular />}
+              onClick={() => setPrismSettingsOpen(true)}
+            >
+              Prism
+            </Button>
+          )}
+          {showMigrateToPrism && (
+            <Button
+              appearance="subtle"
+              icon={<PersonRegular />}
+              disabled={migratingPrism}
+              onClick={() => void handleMigrateToPrism()}
+            >
+              {migratingPrism ? "Redirecting…" : "Migrate to Prism"}
+            </Button>
+          )}
+          {showPasswordChange && (
             <Button
               appearance="subtle"
               icon={<LockClosedRegular />}
@@ -459,6 +516,11 @@ export default function AdminPage({
       <ChangePasswordDialog
         open={changePasswordOpen}
         onOpenChange={setChangePasswordOpen}
+      />
+      <PrismSettingsDialog
+        open={prismSettingsOpen}
+        onOpenChange={setPrismSettingsOpen}
+        prismBound={prismBound}
       />
     </div>
   );

@@ -55,10 +55,9 @@ export default function SettingsDialog({ open, onOpenChange }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (open) {
-      setError("");
-      void getConfig().then((c) => setConfig(c));
-    }
+    if (!open) return;
+    queueMicrotask(() => setError(""));
+    void getConfig().then((c) => setConfig(c));
   }, [open]);
 
   async function handleSave() {

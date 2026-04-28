@@ -39,5 +39,15 @@
 			"binding": "LEGACY_KV",
 			"id": "f847c31492a54f76b225a3c989ee7cfa"
 		}
-	]
+	],
+	/*
+	Configure Prism (https://github.com/siiway/prism) as the OAuth identity
+	source. Set PRISM_BASE_URL and PRISM_CLIENT_ID here, then upload the
+	client secret with `wrangler secret put PRISM_CLIENT_SECRET`. The OAuth
+	app's redirect URI must be `https://<your-domain>/api/auth/prism/callback`.
+	"vars": {
+		"PRISM_BASE_URL": "https://id.example.com",
+		"PRISM_CLIENT_ID": "your-client-id"
+	}
+	*/
 }

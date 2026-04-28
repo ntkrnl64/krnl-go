@@ -112,7 +112,8 @@ export default function EditLinkDialog({
   const [aliasLoading, setAliasLoading] = useState(false);
 
   useEffect(() => {
-    if (link) {
+    if (!link) return;
+    queueMicrotask(() => {
       setUrl(link.url);
       setTitle(link.title ?? "");
       setDescription(link.description ?? "");
@@ -136,7 +137,7 @@ export default function EditLinkDialog({
       setError("");
       setAliasError("");
       setNewAlias("");
-    }
+    });
   }, [link]);
 
   async function handleSave() {

@@ -9,6 +9,7 @@ import {
 import {
   type ResolvedLink,
   type ResolvedMultiLink,
+  type StatusResponse,
   checkStatus,
   clearToken,
   getToken,
@@ -46,6 +47,8 @@ const useStyles = makeStyles({
   },
 });
 
+const DEFAULT_STATUS: StatusResponse = { setup: false };
+
 export default function App() {
   const styles = useStyles();
   const [state, setState] = useState<AppState>("loading");
@@ -53,8 +56,7 @@ export default function App() {
   const [resolvedMulti, setResolvedMulti] = useState<ResolvedMultiLink | null>(
     null,
   );
-  const [noTokenCheck, setNoTokenCheck] = useState(false);
-  const [backendJs, setBackendJs] = useState(false);
+  const [status, setStatus] = useState<StatusResponse>(DEFAULT_STATUS);
 
   useEffect(() => {
     async function init() {
@@ -77,18 +79,13 @@ export default function App() {
       }
 
       try {
-        const {
-          setup,
-          noTokenCheck: ntc,
-          backendJs: bjs,
-        } = await checkStatus();
-        if (bjs) setBackendJs(true);
-        if (ntc) {
-          setNoTokenCheck(true);
+        const s = await checkStatus();
+        setStatus(s);
+        if (s.noTokenCheck) {
           setState("ready");
           return;
         }
-        if (!setup) {
+        if (!s.setup) {
           setState("needs-setup");
           return;
         }
@@ -125,16 +122,22 @@ export default function App() {
           <MultiSelectPage link={resolvedMulti} />
         )}
         {state === "needs-setup" && (
-          <SetupPage onComplete={() => setState("needs-login")} />
+          <SetupPage
+            status={status}
+            onComplete={() => setState("needs-login")}
+          />
         )}
         {state === "needs-login" && (
-          <LoginCard onLogin={() => setState("ready")} />
+          <LoginCard status={status} onLogin={() => setState("ready")} />
         )}
         {state === "ready" && !shortId && (
           <AdminPage
             onLogout={onLogout}
-            noTokenCheck={noTokenCheck}
-            backendJs={backendJs}
+            noTokenCheck={!!status.noTokenCheck}
+            backendJs={!!status.backendJs}
+            prismBound={!!status.prismBound}
+            prismEnabled={!!status.prismEnabled}
+            passwordSet={!!status.passwordSet}
           />
         )}
         {state === "ready" && shortId && (

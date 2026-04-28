@@ -17,17 +17,78 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function checkStatus(): Promise<{
+export interface StatusResponse {
   setup: boolean;
   noTokenCheck?: boolean;
+  kvPending?: boolean;
   backendJs?: boolean;
-}> {
+  prismEnabled?: boolean;
+  prismBound?: boolean;
+  passwordSet?: boolean;
+}
+
+export async function checkStatus(): Promise<StatusResponse> {
   const res = await fetch("/api/status");
-  return res.json() as Promise<{
-    setup: boolean;
-    noTokenCheck?: boolean;
-    backendJs?: boolean;
-  }>;
+  return res.json() as Promise<StatusResponse>;
+}
+
+export type PrismIntent = "login" | "claim" | "migrate";
+
+export async function startPrismLogin(intent: PrismIntent): Promise<string> {
+  const res = await fetch("/api/auth/prism/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ intent }),
+  });
+  const data = (await res.json()) as { url?: string; error?: string };
+  if (!res.ok || !data.url)
+    throw new Error(data.error ?? "Failed to start Prism login");
+  return data.url;
+}
+
+export interface PrismConfigInfo {
+  configured: boolean;
+  source?: "db" | "env";
+  baseUrl?: string;
+  clientId?: string;
+}
+
+export async function getPrismConfig(): Promise<PrismConfigInfo> {
+  const res = await fetch("/api/prism/config", { headers: authHeaders() });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? "Failed to load Prism config");
+  }
+  return res.json() as Promise<PrismConfigInfo>;
+}
+
+export interface PrismConfigInput {
+  baseUrl: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+export async function savePrismConfig(input: PrismConfigInput): Promise<void> {
+  const res = await fetch("/api/prism/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error ?? "Failed to save Prism config");
+  }
+}
+
+export async function clearPrismConfig(): Promise<void> {
+  const res = await fetch("/api/prism/config", {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error ?? "Failed to clear Prism config");
+  }
 }
 
 export async function setup(password: string): Promise<void> {

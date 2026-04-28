@@ -9,4 +9,12 @@ interface Env {
   LOADER?: WorkerLoader;
   /** Optional KV binding for migrating data from KV to D1. Remove after migration. */
   LEGACY_KV?: KVNamespace;
+  /** Prism instance base URL (e.g. "https://id.example.com"). When set,
+   *  Prism becomes available as an authentication source. */
+  PRISM_BASE_URL?: string;
+  /** OAuth client ID issued by the Prism instance. */
+  PRISM_CLIENT_ID?: string;
+  /** OAuth client secret issued by the Prism instance.
+   *  Set via `wrangler secret put PRISM_CLIENT_SECRET`. */
+  PRISM_CLIENT_SECRET?: string;
 }
